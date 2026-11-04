@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 — 2026-11-04
+
+Smoother for everyday use.
+
+- **Disk cache across restarts**: the snapshot (public site content only) is stored as
+  gzip JSON under the DSH cache directory (`~/.dsh/cache/dsh-plugin-take/`, overridable
+  with `DSH_PLUGIN_TAKE_CACHE_DIR`). A same-day cache answers immediately after a restart
+  and a background refresh still picks up new items; the cache expires after 6 hours and
+  never contains user data.
+- **RSS fallback for `take_search`**: if the snapshot is temporarily unavailable, the tool
+  still returns matches from the public daily RSS feed instead of failing outright.
+- **Data freshness line**: list/search outputs now say which site snapshot the answer came
+  from (e.g. "数据：take.hk 站点快照，更新于 2026-11-03 20:07").
+
 ## 0.4.1 — 2026-11-04
 
 Publishing and discovery polish.

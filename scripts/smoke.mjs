@@ -52,7 +52,7 @@ check('search indexes item body text', bodyHit.length === 1 && bodyHit[0].route 
 const hits = T.searchSite(site, '可灵 长镜头', 5)
 check('search finds item and page', hits.length >= 2 && hits[0].matched === 2, 'hits=' + hits.length)
 check('search ranks the item first', hits[0].route === '/items/' + itemId)
-const searchText = T.formatSearch('可灵 长镜头', hits)
+const searchText = T.formatSearch('可灵 长镜头', hits, site)
 check('search output has read hint', searchText.includes('take_read target=/items/' + itemId))
 check('news listing uses dates', T.formatNews(site, 3).includes('2026-11-03 09:00'))
 check('daily listing has a digest line', T.formatDailies(site, 3).includes('可灵 5.0 发布'))
@@ -60,6 +60,18 @@ const readText = T.formatRead('/items/' + itemId, site.pages['/items/' + itemId]
 check('read output has title and body', readText.includes('可灵 5.0 长镜头测试') && readText.includes('30 秒长镜头'))
 const truncated = T.formatRead('/items/' + itemId, site.pages['/items/' + itemId], 5)
 check('read honours maxChars', truncated.includes('已截断') || truncated.length < readText.length)
+
+// disk-cache serialization: a blob must revive into an equivalent site
+const blob = JSON.parse(JSON.stringify(T.siteToCacheBlob(site)))
+const revived = T.reviveSite(blob)
+check('cache blob revives pages', revived && Object.keys(revived.pages).length === Object.keys(site.pages).length)
+check('cache blob revives items', revived.items.length === site.items.length && revived.items[0].date === '2026-11-03 09:00')
+check('cache blob revives dailies/topics', revived.dailies[0].date === '2026-11-03' && revived.topics.length === 1)
+check('cache blob keeps latest daily', revived.latestDailyRoute === site.latestDailyRoute)
+check('cache blob rejects wrong schema', T.reviveSite({ schema: 2, pages: site.pages }) === null)
+check('todayLocal format', /^\d{4}-\d{2}-\d{2}$/.test(T.todayLocal()))
+check('dataLine without stamp', T.dataLine(site) === '数据：take.hk 站点快照')
+check('dataLine with stamp', T.dataLine({ stamp: '2026-11-03 20:07' }).includes('2026-11-03 20:07'))
 
 // route normalisation
 check('today shortcut', T.normalizeRoute('today') === '/today')
@@ -105,7 +117,7 @@ check('unmount unregisters tools', registered.length === 0)
 
 // ------------------------------------------------------- manifest/resources
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-check('version 0.4.1', manifest.version === '0.4.1')
+check('version 0.5.0', manifest.version === '0.5.0')
 check('dsh bundle patch', manifest.dsh && manifest.dsh.bundle && manifest.dsh.bundle.patch === './cordis.patch.yml')
 check('exports locale+icon', manifest.exports['./locale/*.json'] && manifest.exports['./icon'])
 for (const file of ['locale/en.json', 'locale/zh.json']) {

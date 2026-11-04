@@ -45,14 +45,20 @@ AI 影像日报 · 显示最新 2 期（共 15 期，最新 2026-11-03）
 take.hk is a static-snapshot site: its whole content is generated into
 `https://take.hk/data-1.txt … data-10.txt`. On first use the plugin downloads the
 snapshot once (about 10 MB), decodes it in-process to ~11 MB of plain text and caches it
-for 15 minutes. Single-page reads prefer that page's static HTML (about 40 KB).
+for 15 minutes. It also keeps a compact gzip cache of that **public site content**
+(about 2 MB) under the DSH cache directory, so a restart opens in well under a second.
+Single-page reads prefer that page's static HTML (about 40 KB).
 `take_latest(daily)` falls back to the public RSS feed if the snapshot is unavailable.
 
 ## Safety
 
 - Anonymous GETs to take.hk only (snapshot parts, one static page, RSS). No keys, no
   login, no user data.
-- No local file access, no shell, no environment variables, no writes.
+- No local file access, no shell, no access to your data.
+- The only local write is a cache of public site content
+  (`~/.dsh/cache/dsh-plugin-take/snapshot-v1.json.gz`, about 2 MB, same-day, at most 6
+  hours old, deletable at any time); it never contains user data. Override the directory
+  with `DSH_PLUGIN_TAKE_CACHE_DIR`.
 - Read-only text output; page scripts are never executed.
 
 ## Compatibility
@@ -63,8 +69,11 @@ for 15 minutes. Single-page reads prefer that page's static HTML (about 40 KB).
 
 ## Limits
 
-- First snapshot call takes a few seconds with ~400 MB peak memory; afterwards calls are
-  millisecond-fast for 15 minutes.
+- **Cold start** (first call or expired cache): about 5 seconds, ~400 MB peak memory.
+- **Warm start** (same-day cache after a Harness restart): about 0.05 seconds, ~100 MB;
+  a background refresh picks up new items after the 15-minute in-memory TTL.
+- If the snapshot is unavailable, `take_search` falls back to the public daily RSS feed
+  instead of failing.
 - The snapshot follows the site's own rebuilds (several times a day), not real-time.
   Weekly/monthly reports are not published by the site yet.
 - Search covers snapshot text; outbound links must be opened on take.hk.

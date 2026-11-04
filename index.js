@@ -1,4 +1,4 @@
-// dsh-plugin-take 0.3.0 — read all of Take (take.hk) inside DeepSeek Harness.
+// dsh-plugin-take 0.5.0 — read all of Take (take.hk) inside DeepSeek Harness.
 //
 // Data source (read-only, no key, no account):
 // - take.hk is a static snapshot site. Its pages are generated into
@@ -10,22 +10,31 @@
 //   30 topic archives and the site's own pages.
 // - The public RSS feed https://take.hk/feed.xml is kept as a fallback for
 //   take_latest(daily) if the snapshot cannot be loaded.
-// Safety: only anonymous GETs to take.hk; no local files, no shell, no env,
-// no storage, no writes. Everything returned is text for the model to read.
+// Safety: only anonymous GETs to take.hk. The only local writes are a compact
+// cache of public site content under the DSH cache directory (same-day, at most
+// 6 hours old, deletable at any time; no user data). Everything returned is
+// text for the model to read.
 //
 // Tools are registered as raw Host ToolDefinitions (name/description/
 // parameters/output.render/timeoutMs/execute) and owned by ctx.effect so
 // unloading the plugin unregisters them.
 
-import { gunzipSync } from 'node:zlib'
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { gunzipSync, gzipSync } from 'node:zlib'
 
 export const name = 'take-plugin'
 export const inject = ['tools']
 
 const SITE = 'https://take.hk'
 const FEED_URL = SITE + '/feed.xml'
-const UA = 'dsh-plugin-take/0.3.0'
+const UA = 'dsh-plugin-take/0.5.0'
 const CACHE_TTL_MS = 15 * 60 * 1000
+const DISK_CACHE_TTL_MS = 6 * 60 * 60 * 1000
+const CACHE_DIR = process.env.DSH_PLUGIN_TAKE_CACHE_DIR ||
+  join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'cache', 'dsh-plugin-take')
+const CACHE_FILE = join(CACHE_DIR, 'snapshot-v1.json.gz')
 const MAX_PARTS = 30
 const NL = String.fromCharCode(10)
 
@@ -194,7 +203,9 @@ function buildSiteFromBuffer(buf, titles) {
   return assembleSite({ pages, index, titles, usedFastPath })
 }
 
-function assembleSite({ pages, index, titles, usedFastPath }) {
+// Shared finish step: rebuilds the derived views (dailies, topics, routes) from
+// pages + items, so both a network snapshot and a cache blob produce the same site.
+function finishSite({ pages, items, usedFastPath, stamp }) {
   const routeList = Object.keys(pages)
   const dailyRoutes = routeList
     .filter((route) => /^\/daily\/\d{4}-\d{2}-\d{2}$/.test(route))
@@ -209,6 +220,20 @@ function assembleSite({ pages, index, titles, usedFastPath }) {
     .filter((route) => /^\/topics\/.+/.test(route))
     .map((route) => ({ route, title: pages[route].title || route.slice('/topics/'.length) }))
     .sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'))
+  return {
+    pages,
+    items,
+    dailies,
+    topics,
+    latestDailyRoute: dailyRoutes[0] || '/daily',
+    routes: routeList,
+    usedFastPath,
+    itemCount: items.length,
+    stamp: stamp || '',
+  }
+}
+
+function assembleSite({ pages, index, titles, usedFastPath, stamp }) {
   const items = []
   for (const id of Object.keys(index)) {
     const entry = index[id] || {}
@@ -229,17 +254,7 @@ function assembleSite({ pages, index, titles, usedFastPath }) {
     if (!b.date) return -1
     return a.date < b.date ? 1 : a.date > b.date ? -1 : 0
   })
-  const latestDailyRoute = dailyRoutes[0] || '/daily'
-  return {
-    pages,
-    items,
-    dailies,
-    topics,
-    latestDailyRoute,
-    routes: routeList,
-    usedFastPath,
-    itemCount: items.length,
-  }
+  return finishSite({ pages, items, usedFastPath, stamp })
 }
 
 // ------------------------------------------------------------- snapshot fetch
@@ -281,18 +296,83 @@ async function fetchSnapshot(exec) {
 // --------------------------------------------------------------- site cache
 
 let cache = { at: 0, site: null, pending: null }
+let refreshing = null
 
 function peekSite() {
   return cache.site && Date.now() - cache.at < CACHE_TTL_MS ? cache.site : null
+}
+
+function todayLocal() {
+  const now = new Date()
+  return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
+}
+
+// The disk cache holds only public take.hk content (never user data) and can be
+// deleted at any time. A same-day cache answers instantly after a restart while
+// a background refresh still picks up new items.
+function siteToCacheBlob(site) {
+  return { schema: 1, date: todayLocal(), stamp: site.stamp || '', pages: site.pages, items: site.items }
+}
+
+function reviveSite(blob) {
+  if (!blob || blob.schema !== 1 || !blob.pages || typeof blob.pages !== 'object') return null
+  if (Object.keys(blob.pages).length === 0) return null
+  const items = Array.isArray(blob.items) ? blob.items : []
+  return finishSite({ pages: blob.pages, items, usedFastPath: true, stamp: blob.stamp || '' })
+}
+
+function readDiskCache() {
+  try {
+    const stat = statSync(CACHE_FILE)
+    if (Date.now() - stat.mtimeMs > DISK_CACHE_TTL_MS) return null
+    const blob = JSON.parse(gunzipSync(readFileSync(CACHE_FILE)).toString('utf8'))
+    if (blob.date !== todayLocal()) return null
+    const site = reviveSite(blob)
+    if (site) site.savedAt = stat.mtimeMs
+    return site
+  } catch {
+    return null
+  }
+}
+
+function writeDiskCache(site) {
+  try {
+    const payload = gzipSync(Buffer.from(JSON.stringify(siteToCacheBlob(site)), 'utf8'))
+    mkdirSync(CACHE_DIR, { recursive: true })
+    const tmp = CACHE_FILE + '.' + process.pid + '.tmp'
+    writeFileSync(tmp, payload)
+    renameSync(tmp, CACHE_FILE)
+  } catch {
+    // Best effort: a read-only home or a locked file must never break a tool.
+  }
+}
+
+function refreshInBackground(exec) {
+  if (refreshing) return
+  refreshing = fetchSnapshot(exec)
+    .then((site) => {
+      cache = { at: Date.now(), site, pending: null }
+      writeDiskCache(site)
+      return site
+    })
+    .catch(() => undefined)
+    .finally(() => { refreshing = null })
 }
 
 async function loadSite(exec) {
   const now = Date.now()
   if (cache.site && now - cache.at < CACHE_TTL_MS) return cache.site
   if (cache.pending) return cache.pending
+  const disk = readDiskCache()
+  if (disk) {
+    cache = { at: now, site: disk, pending: null }
+    if (now - (disk.savedAt || 0) > CACHE_TTL_MS) refreshInBackground(exec)
+    return disk
+  }
   cache.pending = fetchSnapshot(exec)
     .then((site) => {
       cache = { at: Date.now(), site, pending: null }
+      writeDiskCache(site)
       return site
     })
     .catch((err) => {
@@ -331,6 +411,10 @@ function urlFor(route) {
   return SITE + '/#' + route
 }
 
+function dataLine(site) {
+  return site && site.stamp ? '数据：take.hk 站点快照，更新于 ' + site.stamp : '数据：take.hk 站点快照'
+}
+
 // ------------------------------------------------------------ take_latest
 
 const RSS_FALLBACK = { cachedAt: 0, items: [] }
@@ -364,7 +448,7 @@ async function rssDailies(exec) {
 
 function formatNews(site, limit) {
   const items = site.items.filter((item) => item.date).slice(0, limit)
-  const lines = ['最新精选资讯（按发布时间倒序，共 ' + site.items.length + ' 条，显示 ' + items.length + ' 条）', '']
+  const lines = ['最新精选资讯（按发布时间倒序，共 ' + site.items.length + ' 条，显示 ' + items.length + ' 条）', dataLine(site), '']
   items.forEach((item, idx) => {
     lines.push(String(idx + 1) + '. ' + item.date + ' · ' + item.title)
     if (item.summary) lines.push('   ' + item.summary.slice(0, 180))
@@ -381,6 +465,7 @@ function formatDailies(site, limit) {
   if (dailies.length === 0) return '（快照中没有找到日报）'
   const lines = [
     'AI 影像日报 · 显示最新 ' + dailies.length + ' 期（共 ' + site.dailies.length + ' 期，最新 ' + dailies[0].date + '）',
+    dataLine(site),
     '',
   ]
   dailies.forEach((daily, idx) => {
@@ -477,9 +562,9 @@ function searchSite(site, query, limit) {
   return results.slice(0, limit)
 }
 
-function formatSearch(query, results) {
+function formatSearch(query, results, site) {
   if (results.length === 0) return '没有匹配「' + query + '」的内容。试试更短的关键词，或用 take_latest 看最新内容。'
-  const lines = ['搜索「' + query + '」，命中 ' + results.length + ' 条（按相关度排序）：', '']
+  const lines = ['搜索「' + query + '」，命中 ' + results.length + ' 条（按相关度排序）：', dataLine(site), '']
   results.forEach((hit, idx) => {
     lines.push(String(idx + 1) + '. [' + hit.kind + '] ' + hit.title + (hit.date ? '（' + hit.date + '）' : ''))
     if (hit.snippet) lines.push('   ' + hit.snippet)
@@ -655,8 +740,32 @@ const takeSearchTool = {
     const query = collapse(args && args.query)
     if (!query) throw new Error('take_search needs a query string')
     const limit = clampInt(args && args.limit, 8, 1, 20)
-    const site = await loadSite(exec)
-    return formatSearch(query, searchSite(site, query, limit))
+    try {
+      const site = await loadSite(exec)
+      return formatSearch(query, searchSite(site, query, limit), site)
+    } catch (err) {
+      // Last-resort fallback: search the public RSS dailies when the snapshot is
+      // unavailable, so a temporary site problem still gives partial results.
+      const entries = await rssDailies(exec).catch(() => [])
+      const terms = query.toLowerCase().split(/[\s,，、;；]+/).filter(Boolean)
+      const hits = entries.filter((entry) => {
+        const hay = (entry.title + ' ' + entry.summary).toLowerCase()
+        return terms.length > 1 ? terms.every((term) => hay.includes(term)) : terms.some((term) => hay.includes(term))
+      }).slice(0, limit)
+      if (hits.length === 0) {
+        throw new Error(
+          '站点快照暂时不可用（' + (err && err.message ? err.message : String(err)) + '），' +
+          'RSS 里也没有匹配「' + query + '」的内容。稍后重试，或先用 take_latest 看日报。',
+        )
+      }
+      const lines = ['全站快照暂时不可用，以下是从公开 RSS（最近日报）里找到的匹配：', '']
+      hits.forEach((entry, idx) => {
+        lines.push(String(idx + 1) + '. ' + entry.title)
+        if (entry.summary) lines.push('   ' + entry.summary.slice(0, 160))
+        lines.push('   ' + entry.link)
+      })
+      return lines.join(NL)
+    }
   },
 }
 
@@ -764,6 +873,11 @@ export const tools = {
   formatNews,
   formatDailies,
   assembleSite,
+  finishSite,
+  siteToCacheBlob,
+  reviveSite,
+  dataLine,
+  todayLocal,
   clampInt,
 }
 
