@@ -1,7 +1,8 @@
-// Smoke test for dsh-plugin-take 0.3.0. Run: node scripts/smoke.mjs
+// Smoke test for dsh-plugin-take 0.6.1. Run: node scripts/smoke.mjs
 // Uses an in-memory snapshot fixture and a mock Cordis ctx — no network, no Harness.
 
 import { readFileSync } from 'node:fs'
+import { gzipSync } from 'node:zlib'
 
 const NL = String.fromCharCode(10)
 const mod = await import('../index.js')
@@ -26,7 +27,13 @@ const snapshot = {
       '<button>原文</button></div>',
     ['/items/' + itemId]:
       '<div><!--TITLE:可灵 5.0 长镜头测试--><div>量子位 · 2026-11-03 09:00</div>' +
-      '<div>AI 导读</div><div>可灵 5.0 支持 30 秒长镜头。</div><div>正文独有词：fixturebodytag</div><nav>菜单</nav></div>',
+      '<div>AI 导读</div><div>可灵 5.0 支持 30 秒长镜头。</div><div>正文独有词：fixturebodytag</div>' +
+      '<a href="https://x.com/tester/status/12345">看原视频</a>' +
+      '<a href="https://www.youtube.com/watch?v=abc123">打开原文</a>' +
+      '<a href="https://x.com/tester">X · @tester</a>' +
+      '<nav>菜单</nav></div>',
+    '/all?category=tools':
+      '<div><!--TITLE:全部 AI 影像动态 · AI 影像工具--><a href="#/items/' + itemId + '">可灵 5.0 长镜头测试</a></div>',
     '/topics/kling': '<div><!--TITLE:可灵 / Kling--><div>返回全部主题</div><div>量子位 · 2026-11-02</div></div>',
     '/weekly': '<div><!--TITLE:AI 影像周报--><div>还没有发布 AI 影像周报</div></div>',
   },
@@ -45,6 +52,10 @@ check('topic detected', site.topics.length === 1 && site.topics[0].route === '/t
 check('page title cleaned', site.pages['/daily/2026-11-03'].title === 'AI 影像日报 2026-11-03：测试 3 条', site.pages['/daily/2026-11-03'].title)
 check('nav/header/button stripped', !/导航|菜单|原文/.test(site.pages['/daily/2026-11-03'].text))
 check('entities decoded', site.pages['/daily/2026-11-03'].text.includes('长镜头 & 原生音频'))
+check('item category extracted from listing page', site.items[0].category === 'tools', site.items[0].category)
+check('source links extracted', site.pages['/items/' + itemId].links.includes('https://x.com/tester/status/12345'))
+check('profile links filtered out', !site.pages['/items/' + itemId].links.includes('https://x.com/tester'))
+check('non-source hosts kept', site.pages['/items/' + itemId].links.includes('https://www.youtube.com/watch?v=abc123'))
 
 // search + format
 const bodyHit = T.searchSite(site, 'fixturebodytag', 5)
@@ -58,6 +69,24 @@ check('news listing uses dates', T.formatNews(site, 3).includes('2026-11-03 09:0
 check('daily listing has a digest line', T.formatDailies(site, 3).includes('可灵 5.0 发布'))
 const readText = T.formatRead('/items/' + itemId, site.pages['/items/' + itemId], 100)
 check('read output has title and body', readText.includes('可灵 5.0 长镜头测试') && readText.includes('30 秒长镜头'))
+check('read output lists source links', readText.includes('原文/来源：') && readText.includes('https://x.com/tester/status/12345'))
+check('news category filter keeps item', T.formatNews(site, 5, 'tools').includes('可灵 5.0 长镜头测试'))
+check('news category filter drops other categories', T.formatNews(site, 5, 'industry').includes('暂时没有'))
+check('search category filter', T.searchSite(site, '可灵', 5, 'tools').length >= 1 && T.searchSite(site, '可灵', 5, 'paper').length === 0)
+check('category labels', T.categoryLabel('tools') === 'AI 影像工具' && T.normalizeCategory('AI 影像工具') === 'tools')
+check('unknown category normalised empty', T.normalizeCategory('nope') === '')
+
+// streaming parser must produce the same site as the buffer parser
+const streamed = await T.buildSiteFromStream(gzipSync(Buffer.from(JSON.stringify({ pages: snapshot.pages, index: snapshot.index }))), {})
+check('stream parser pages', Object.keys(streamed.pages).length === Object.keys(site.pages).length)
+check('stream parser items/categories', streamed.items.length === 1 && streamed.items[0].category === 'tools')
+check('stream parser links', streamed.pages['/items/' + itemId].links.length === 2)
+check('stream parser dailies', streamed.dailies.length === 1 && streamed.latestDailyRoute === '/daily/2026-11-03')
+
+// apply() accepts config values (configuration is parsed from the plugin row)
+const configCtx = { effect(run) { run() }, tools: { register() { return () => {} } } }
+mod.apply(configCtx, { diskCache: false, ttlMinutes: 30 })
+check('apply accepts config object', true)
 const truncated = T.formatRead('/items/' + itemId, site.pages['/items/' + itemId], 5)
 check('read honours maxChars', truncated.includes('已截断') || truncated.length < readText.length)
 
@@ -68,7 +97,7 @@ check('cache blob revives pages', revived && Object.keys(revived.pages).length =
 check('cache blob revives items', revived.items.length === site.items.length && revived.items[0].date === '2026-11-03 09:00')
 check('cache blob revives dailies/topics', revived.dailies[0].date === '2026-11-03' && revived.topics.length === 1)
 check('cache blob keeps latest daily', revived.latestDailyRoute === site.latestDailyRoute)
-check('cache blob rejects wrong schema', T.reviveSite({ schema: 2, pages: site.pages }) === null)
+check('cache blob rejects old schema', T.reviveSite({ schema: 1, pages: site.pages }) === null)
 check('todayLocal format', /^\d{4}-\d{2}-\d{2}$/.test(T.todayLocal()))
 check('dataLine without stamp', T.dataLine(site) === '数据：take.hk 站点快照')
 check('dataLine with stamp', T.dataLine({ stamp: '2026-11-03 20:07' }).includes('2026-11-03 20:07'))
@@ -117,7 +146,7 @@ check('unmount unregisters tools', registered.length === 0)
 
 // ------------------------------------------------------- manifest/resources
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-check('version 0.5.0', manifest.version === '0.5.0')
+check('version 0.6.1', manifest.version === '0.6.1')
 check('dsh bundle patch', manifest.dsh && manifest.dsh.bundle && manifest.dsh.bundle.patch === './cordis.patch.yml')
 check('exports locale+icon', manifest.exports['./locale/*.json'] && manifest.exports['./icon'])
 for (const file of ['locale/en.json', 'locale/zh.json']) {

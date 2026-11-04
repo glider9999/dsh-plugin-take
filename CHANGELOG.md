@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.1 — 2026-11-04
+
+- Fix: the 0.6.0 `export const Config` plain JSON-Schema object crashed activation
+  (`TypeError: Cannot read properties of undefined (reading 'validate')` because the
+  Loader expects a schemastery schema). The export is removed; the same keys
+  (`diskCache`, `ttlMinutes`) are still read from the plugin row's `config` in
+  `apply(ctx, config)` and documented in both READMEs.
+- Configuration changes apply on the next plugin load (restart Harness).
+
+## 0.6.0 — 2026-11-04
+
+- **Streaming snapshot parser**: the 70 MB decompressed payload is parsed chunk by chunk
+  (`zlib` gunzip stream + incremental JSON reader) instead of materializing it as one
+  buffer. Cold start drops to about 2.6 s / 320 MB (was ~5 s / 420 MB); the byte-buffer
+  parser stays as a fallback if the format ever changes.
+- **Original source links**: `take_read` now appends up to 3 original links (X post,
+  YouTube video, GitHub project, ...) for news items, with site/profile/share links
+  filtered out.
+- **Category filter**: items are mapped to the site's own categories (video-models,
+  tools, works, industry, paper, tip, opinion) from its `?category=` listing pages;
+  `take_latest` and `take_search` accept a `category` parameter and show labels.
+- **Config**: `export const Config` exposes `diskCache` (default true) and `ttlMinutes`
+  (default 15), so users can tune caching or switch to a strict no-write mode.
+
 ## 0.5.0 — 2026-11-04
 
 Smoother for everyday use.

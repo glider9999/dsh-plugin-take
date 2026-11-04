@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-take",
-  "version": "0.5.0",
+  "version": "0.6.1",
   "description": "Take (take.hk) for DeepSeek Harness: read all of take.hk — 1400+ selected AI film news items, daily briefings including today, 30 topic archives, full-text search and whole-page reading. Read-only, no key, no local data.",
   "type": "module",
   "main": "index.js",

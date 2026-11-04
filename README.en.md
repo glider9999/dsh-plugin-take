@@ -24,9 +24,9 @@ dsh plugin --profile <your-profile> add dsh-plugin-take
 
 | Tool | What it does |
 | --- | --- |
-| `take_latest` | Latest daily briefings (**including today's**) or latest selected news. `kind: daily \| news`, `limit` 1–20 |
-| `take_search` | Full-text search across 1,400+ items, every daily briefing and the 30 topic archives |
-| `take_read` | Read any page as text: take.hk URL, path (`/daily/2026-11-03`, `/topics/google`, `/items/<id>`), bare item id, a date, or `today` |
+| `take_latest` | Latest daily briefings (**including today's**) or latest selected news, with an optional `category` filter. `kind: daily \| news`, `limit` 1–20 |
+| `take_search` | Full-text search across 1,400+ items, every daily briefing and the 30 topic archives; optional `category` filter |
+| `take_read` | Read any page as text (URL, path, item id, date or `today`); news items also list their **original source links** |
 | `take_topics` | List the 30 topic archives |
 | `take_links` | Main entry points: home, daily, hot, topics, cases, canvas, Agent/API page, RSS |
 
@@ -50,6 +50,20 @@ for 15 minutes. It also keeps a compact gzip cache of that **public site content
 Single-page reads prefer that page's static HTML (about 40 KB).
 `take_latest(daily)` falls back to the public RSS feed if the snapshot is unavailable.
 
+## Configuration (optional)
+
+Add `config` to the `take-plugin` row in the profile's `cordis.patch.yml`:
+
+```yaml
+- id: take-plugin
+  name: dsh-plugin-take
+  config:
+    diskCache: true      # cache public site content on disk (default true)
+    ttlMinutes: 15       # in-memory cache lifetime, 1-1440 minutes (default 15)
+```
+
+For a strict no-write setup use `diskCache: false`: the plugin then only makes anonymous requests and writes nothing. Configuration is read at plugin load, so restart Harness after changing it.
+
 ## Safety
 
 - Anonymous GETs to take.hk only (snapshot parts, one static page, RSS). No keys, no
@@ -69,11 +83,13 @@ Single-page reads prefer that page's static HTML (about 40 KB).
 
 ## Limits
 
-- **Cold start** (first call or expired cache): about 5 seconds, ~400 MB peak memory.
-- **Warm start** (same-day cache after a Harness restart): about 0.05 seconds, ~100 MB;
+- **Cold start** (first call or expired cache): about 2.6 seconds, ~320 MB (streaming parser; no 70 MB buffer).
+- **Warm start** (same-day cache after a Harness restart): about 0.05 seconds, ~106 MB;
   a background refresh picks up new items after the 15-minute in-memory TTL.
 - If the snapshot is unavailable, `take_search` falls back to the public daily RSS feed
   instead of failing.
+- Categories come from the site's own `?category=` listing pages and cover roughly the
+  latest 120 items per category; older items have no category tag but stay searchable.
 - The snapshot follows the site's own rebuilds (several times a day), not real-time.
   Weekly/monthly reports are not published by the site yet.
 - Search covers snapshot text; outbound links must be opened on take.hk.

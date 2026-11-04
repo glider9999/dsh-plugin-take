@@ -22,21 +22,62 @@
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { gunzipSync, gzipSync } from 'node:zlib'
+import { Readable } from 'node:stream'
+import { createGunzip, gunzipSync, gzipSync } from 'node:zlib'
 
 export const name = 'take-plugin'
 export const inject = ['tools']
 
 const SITE = 'https://take.hk'
 const FEED_URL = SITE + '/feed.xml'
-const UA = 'dsh-plugin-take/0.5.0'
-const CACHE_TTL_MS = 15 * 60 * 1000
+const UA = 'dsh-plugin-take/0.6.0'
+const CACHE_SCHEMA = 2
 const DISK_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const CACHE_DIR = process.env.DSH_PLUGIN_TAKE_CACHE_DIR ||
   join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'cache', 'dsh-plugin-take')
 const CACHE_FILE = join(CACHE_DIR, 'snapshot-v1.json.gz')
 const MAX_PARTS = 30
 const NL = String.fromCharCode(10)
+
+// Runtime settings, filled from the plugin row's `config` (see Config below).
+const settings = { diskCache: true, ttlMinutes: 15 }
+
+function memoryTtlMs() {
+  return settings.ttlMinutes * 60 * 1000
+}
+
+// Configuration is read from the plugin row's `config` in apply(ctx, config);
+// exporting a plain JSON-Schema `Config` object is not supported by the Loader
+// (it expects a schemastery schema), so the accepted keys are documented instead.
+
+
+// The site's own ?category= listing pages define these categories.
+const CATEGORIES = [
+  { slug: 'video-models', label: 'AI 视频模型' },
+  { slug: 'tools', label: 'AI 影像工具' },
+  { slug: 'works', label: 'AI 作品与案例' },
+  { slug: 'industry', label: '影视与 AI 行业' },
+  { slug: 'paper', label: '研究' },
+  { slug: 'tip', label: '教程' },
+  { slug: 'opinion', label: '观点' },
+]
+
+const CATEGORY_LABELS = {}
+for (const category of CATEGORIES) CATEGORY_LABELS[category.slug] = category.label
+
+function categoryLabel(slug) {
+  return CATEGORY_LABELS[String(slug || '').trim()] || ''
+}
+
+function normalizeCategory(raw) {
+  const value = String(raw || '').trim().toLowerCase()
+  if (!value) return ''
+  if (CATEGORY_LABELS[value]) return value
+  for (const category of CATEGORIES) {
+    if (category.label.toLowerCase() === value) return category.slug
+  }
+  return ''
+}
 
 // ---------------------------------------------------------------- text utils
 
@@ -93,6 +134,49 @@ function pageTitle(html) {
 function extractDate(text) {
   const hit = String(text || '').match(/20\d{2}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2})?/)
   return hit ? hit[0] : ''
+}
+
+// External source links (original X post, YouTube video, GitHub project, ...)
+// extracted from a rendered item page; the site's own links are dropped.
+const EXTERNAL_LINK_RE = /<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi
+
+function extractSourceLinks(html) {
+  const out = []
+  EXTERNAL_LINK_RE.lastIndex = 0
+  let match
+  while ((match = EXTERNAL_LINK_RE.exec(String(html || '')))) {
+    const url = decodeEntities(match[1])
+    if (!url || url.includes('take.hk')) continue
+    if (/^https?:\/\/(?:x|twitter)\.com\/[^/?#]+\/?$/i.test(url)) continue // profile links
+    if (/(?:twitter\.com\/intent|facebook\.com\/sharer|linkedin\.com\/share|reddit\.com\/submit|t\.me\/share|getpocket)/i.test(url)) continue
+    if (/\.(?:png|jpe?g|gif|webp|svg|mp4|webm|css|js)(?:[?#]|$)/i.test(url)) continue
+    if (!out.includes(url)) out.push(url)
+    if (out.length >= 3) break
+  }
+  return out
+}
+
+// The site's ?category= listing pages link to item pages; that is how the
+// plugin learns each item's category instead of guessing from tags.
+function extractItemIds(html) {
+  const ids = []
+  const re = /\/items\/([a-z0-9]{20,})/g
+  let match
+  while ((match = re.exec(String(html || '')))) {
+    if (!ids.includes(match[1])) ids.push(match[1])
+  }
+  return ids
+}
+
+// One page record shared by the buffer and the streaming parsers.
+function pageRecord(route, html) {
+  const text = htmlToText(html)
+  const record = { title: pageTitle(html), text, date: extractDate(text) }
+  if (route.startsWith('/items/')) {
+    const links = extractSourceLinks(html)
+    if (links.length > 0) record.links = links
+  }
+  return record
 }
 
 // ----------------------------------------------------------- snapshot decode
@@ -165,6 +249,7 @@ function extractIndexObject(buf, from) {
 function buildSiteFromBuffer(buf, titles) {
   let pages = {}
   let index = {}
+  const categoryByItem = {}
   let usedFastPath = true
   try {
     const marker = buf.indexOf('"pages":')
@@ -184,8 +269,13 @@ function buildSiteFromBuffer(buf, titles) {
       const [escapedHtml, afterHtml] = readJsonString(buf, i)
       i = afterHtml
       const html = JSON.parse('"' + escapedHtml + '"')
-      const text = htmlToText(html)
-      pages[route] = { title: pageTitle(html), text, date: extractDate(text) }
+      pages[route] = pageRecord(route, html)
+      const categoryMatch = route.match(/^\/all\?category=([a-z-]+)/)
+      if (categoryMatch) {
+        for (const id of extractItemIds(html)) {
+          if (!categoryByItem[id]) categoryByItem[id] = categoryMatch[1]
+        }
+      }
     }
     index = extractIndexObject(buf, i)
   } catch (err) {
@@ -195,12 +285,174 @@ function buildSiteFromBuffer(buf, titles) {
     pages = {}
     for (const route of Object.keys(doc.pages || {})) {
       const html = String(doc.pages[route] || '')
-      const text = htmlToText(html)
-      pages[route] = { title: pageTitle(html), text, date: extractDate(text) }
+      pages[route] = pageRecord(route, html)
+      const categoryMatch = route.match(/^\/all\?category=([a-z-]+)/)
+      if (categoryMatch) {
+        for (const id of extractItemIds(html)) {
+          if (!categoryByItem[id]) categoryByItem[id] = categoryMatch[1]
+        }
+      }
     }
     index = doc.index || {}
   }
-  return assembleSite({ pages, index, titles, usedFastPath })
+  return assembleSite({ pages, index, titles, usedFastPath, categoryByItem })
+}
+
+// ----------------------------------------------- incremental snapshot parser
+
+// A pull cursor over the decompressed JSON chunks. Strings are collected across
+// chunk boundaries, so the whole 70 MB payload never has to exist as one buffer.
+class JsonStreamReader {
+  constructor(iter) {
+    this.iter = iter
+    this.chunk = Buffer.alloc(0)
+    this.pos = 0
+    this.done = false
+  }
+
+  async ensure() {
+    while (this.pos >= this.chunk.length) {
+      if (this.done) return false
+      const { value, done } = await this.iter.next()
+      if (done) { this.done = true; return false }
+      this.chunk = value
+      this.pos = 0
+    }
+    return true
+  }
+
+  async skipWs() {
+    while (await this.ensure()) {
+      const byte = this.chunk[this.pos]
+      if (byte === 0x20 || byte === 0x0a || byte === 0x0d || byte === 0x09) this.pos++
+      else break
+    }
+  }
+
+  async peekByte() {
+    if (!(await this.ensure())) throw new Error('snapshot stream ended unexpectedly')
+    return this.chunk[this.pos]
+  }
+
+  async readByte() {
+    if (!(await this.ensure())) throw new Error('snapshot stream ended unexpectedly')
+    return this.chunk[this.pos++]
+  }
+
+  async expectByte(byte, what) {
+    await this.skipWs()
+    const actual = await this.readByte()
+    if (actual !== byte) throw new Error('snapshot stream: expected ' + what)
+  }
+
+  // Returns the raw escaped string content (without the surrounding quotes).
+  async readRawString() {
+    await this.skipWs()
+    if ((await this.readByte()) !== 0x22) throw new Error('snapshot stream: expected string')
+    const parts = []
+    let escaped = false
+    for (;;) {
+      if (!(await this.ensure())) throw new Error('snapshot stream: unterminated string')
+      const chunk = this.chunk
+      const start = this.pos
+      let i = start
+      while (i < chunk.length) {
+        const byte = chunk[i]
+        if (escaped) { escaped = false; i++; continue }
+        if (byte === 0x5c) { escaped = true; i++; continue }
+        if (byte === 0x22) {
+          if (i > start) parts.push(chunk.subarray(start, i))
+          this.pos = i + 1
+          if (parts.length === 1) return parts[0].toString('utf8')
+          return Buffer.concat(parts).toString('utf8')
+        }
+        i++
+      }
+      if (chunk.length > start) parts.push(chunk.subarray(start))
+      this.pos = chunk.length
+    }
+  }
+
+  async readJsonString() {
+    return JSON.parse('"' + (await this.readRawString()) + '"')
+  }
+
+  // Reads a balanced JSON object and parses it (used for the small `index` map).
+  async readIndexObject() {
+    await this.skipWs()
+    if ((await this.readByte()) !== 0x7b) throw new Error('snapshot stream: expected index object')
+    const parts = [Buffer.from('{')]
+    let depth = 1
+    let inString = false
+    let escaped = false
+    for (;;) {
+      if (!(await this.ensure())) throw new Error('snapshot stream: unterminated index object')
+      const chunk = this.chunk
+      const start = this.pos
+      let i = start
+      while (i < chunk.length) {
+        const byte = chunk[i]
+        if (inString) {
+          if (escaped) escaped = false
+          else if (byte === 0x5c) escaped = true
+          else if (byte === 0x22) inString = false
+        } else if (byte === 0x22) inString = true
+        else if (byte === 0x7b) depth++
+        else if (byte === 0x7d) {
+          depth--
+          if (depth === 0) {
+            i++
+            parts.push(chunk.subarray(start, i))
+            this.pos = i
+            const json = Buffer.concat(parts).toString('utf8')
+            return JSON.parse(json)
+          }
+        }
+        i++
+      }
+      parts.push(chunk.subarray(start))
+      this.pos = chunk.length
+    }
+  }
+}
+
+async function* gunzipChunks(compressed) {
+  const gunzip = createGunzip()
+  Readable.from([compressed]).pipe(gunzip)
+  for await (const chunk of gunzip) yield chunk
+}
+
+async function buildSiteFromStream(compressed, titles) {
+  const reader = new JsonStreamReader(gunzipChunks(compressed))
+  await reader.expectByte(0x7b, 'top-level object')
+  const firstKey = await reader.readJsonString()
+  if (firstKey !== 'pages') throw new Error('snapshot stream: unexpected first key ' + firstKey)
+  await reader.expectByte(0x3a, 'colon')
+  await reader.expectByte(0x7b, 'pages object')
+  const pages = {}
+  const categoryByItem = {}
+  for (;;) {
+    await reader.skipWs()
+    const peek = await reader.peekByte()
+    if (peek === 0x7d) { await reader.readByte(); break }
+    if (peek === 0x2c) { await reader.readByte(); continue }
+    const route = await reader.readJsonString()
+    await reader.expectByte(0x3a, 'colon')
+    const html = await reader.readJsonString()
+    pages[route] = pageRecord(route, html)
+    const categoryMatch = route.match(/^\/all\?category=([a-z-]+)/)
+    if (categoryMatch) {
+      for (const id of extractItemIds(html)) {
+        if (!categoryByItem[id]) categoryByItem[id] = categoryMatch[1]
+      }
+    }
+  }
+  await reader.expectByte(0x2c, 'comma after pages')
+  const indexKey = await reader.readJsonString()
+  if (indexKey !== 'index') throw new Error('snapshot stream: unexpected key ' + indexKey)
+  await reader.expectByte(0x3a, 'colon')
+  const index = await reader.readIndexObject()
+  return assembleSite({ pages, index, titles, usedFastPath: true, categoryByItem })
 }
 
 // Shared finish step: rebuilds the derived views (dailies, topics, routes) from
@@ -233,7 +485,7 @@ function finishSite({ pages, items, usedFastPath, stamp }) {
   }
 }
 
-function assembleSite({ pages, index, titles, usedFastPath, stamp }) {
+function assembleSite({ pages, index, titles, usedFastPath, stamp, categoryByItem }) {
   const items = []
   for (const id of Object.keys(index)) {
     const entry = index[id] || {}
@@ -246,6 +498,7 @@ function assembleSite({ pages, index, titles, usedFastPath, stamp }) {
       title: page.title || cleanTitle(entry.t) || id,
       summary: collapse(entry.s || ''),
       date: page.date || '',
+      category: (categoryByItem && categoryByItem[id]) || '',
     })
   }
   items.sort((a, b) => {
@@ -287,8 +540,13 @@ async function fetchSnapshot(exec) {
   const ext = JSON.parse(parts.join(''))
   const compressed = Buffer.from(String(ext.data || ''), 'base64')
   if (compressed.length === 0) throw new Error('take.hk snapshot payload is empty')
-  const raw = gunzipSync(compressed)
-  const site = buildSiteFromBuffer(raw, ext.titles || {})
+  let site
+  try {
+    site = await buildSiteFromStream(compressed, ext.titles || {})
+  } catch {
+    // Format drift fallback: decode fully and use the byte scanner.
+    site = buildSiteFromBuffer(gunzipSync(compressed), ext.titles || {})
+  }
   site.stamp = String(ext.v || '')
   return site
 }
@@ -299,7 +557,7 @@ let cache = { at: 0, site: null, pending: null }
 let refreshing = null
 
 function peekSite() {
-  return cache.site && Date.now() - cache.at < CACHE_TTL_MS ? cache.site : null
+  return cache.site && Date.now() - cache.at < memoryTtlMs() ? cache.site : null
 }
 
 function todayLocal() {
@@ -311,17 +569,18 @@ function todayLocal() {
 // deleted at any time. A same-day cache answers instantly after a restart while
 // a background refresh still picks up new items.
 function siteToCacheBlob(site) {
-  return { schema: 1, date: todayLocal(), stamp: site.stamp || '', pages: site.pages, items: site.items }
+  return { schema: CACHE_SCHEMA, date: todayLocal(), stamp: site.stamp || '', pages: site.pages, items: site.items }
 }
 
 function reviveSite(blob) {
-  if (!blob || blob.schema !== 1 || !blob.pages || typeof blob.pages !== 'object') return null
+  if (!blob || blob.schema !== CACHE_SCHEMA || !blob.pages || typeof blob.pages !== 'object') return null
   if (Object.keys(blob.pages).length === 0) return null
   const items = Array.isArray(blob.items) ? blob.items : []
   return finishSite({ pages: blob.pages, items, usedFastPath: true, stamp: blob.stamp || '' })
 }
 
 function readDiskCache() {
+  if (!settings.diskCache) return null
   try {
     const stat = statSync(CACHE_FILE)
     if (Date.now() - stat.mtimeMs > DISK_CACHE_TTL_MS) return null
@@ -336,6 +595,7 @@ function readDiskCache() {
 }
 
 function writeDiskCache(site) {
+  if (!settings.diskCache) return
   try {
     const payload = gzipSync(Buffer.from(JSON.stringify(siteToCacheBlob(site)), 'utf8'))
     mkdirSync(CACHE_DIR, { recursive: true })
@@ -361,12 +621,12 @@ function refreshInBackground(exec) {
 
 async function loadSite(exec) {
   const now = Date.now()
-  if (cache.site && now - cache.at < CACHE_TTL_MS) return cache.site
+  if (cache.site && now - cache.at < memoryTtlMs()) return cache.site
   if (cache.pending) return cache.pending
   const disk = readDiskCache()
   if (disk) {
     cache = { at: now, site: disk, pending: null }
-    if (now - (disk.savedAt || 0) > CACHE_TTL_MS) refreshInBackground(exec)
+    if (now - (disk.savedAt || 0) > memoryTtlMs()) refreshInBackground(exec)
     return disk
   }
   cache.pending = fetchSnapshot(exec)
@@ -446,15 +706,26 @@ async function rssDailies(exec) {
   return entries
 }
 
-function formatNews(site, limit) {
-  const items = site.items.filter((item) => item.date).slice(0, limit)
-  const lines = ['最新精选资讯（按发布时间倒序，共 ' + site.items.length + ' 条，显示 ' + items.length + ' 条）', dataLine(site), '']
+function formatNews(site, limit, category) {
+  const pool = category ? site.items.filter((item) => item.category === category) : site.items
+  const items = pool.filter((item) => item.date).slice(0, limit)
+  const scope = category ? ' · ' + categoryLabel(category) : ''
+  const lines = [
+    '最新精选资讯' + scope + '（按发布时间倒序，共 ' + pool.length + ' 条，显示 ' + items.length + ' 条）',
+    dataLine(site),
+    '',
+  ]
   items.forEach((item, idx) => {
-    lines.push(String(idx + 1) + '. ' + item.date + ' · ' + item.title)
+    const tag = item.category ? '「' + categoryLabel(item.category) + '」' : ''
+    lines.push(String(idx + 1) + '. ' + item.date + ' · ' + tag + item.title)
     if (item.summary) lines.push('   ' + item.summary.slice(0, 180))
     lines.push('   ' + urlFor(item.route))
   })
-  if (items.length === 0) lines.push('（快照中没有找到带日期的资讯）')
+  if (items.length === 0) {
+    lines.push(category
+      ? '（「' + categoryLabel(category) + '」分类下暂时没有带日期的资讯。可用分类：' + CATEGORIES.map((item) => item.label).join(' / ') + '）'
+      : '（快照中没有找到带日期的资讯）')
+  }
   lines.push('')
   lines.push('想看全文：take_read target=<路径>；例如第 1 条 ' + urlFor(items[0] ? items[0].route : '/'))
   return lines.join(NL)
@@ -483,7 +754,7 @@ function formatDailies(site, limit) {
 
 // ------------------------------------------------------------- take_search
 
-function searchSite(site, query, limit) {
+function searchSite(site, query, limit, category) {
   const terms = String(query || '')
     .toLowerCase()
     .split(/[\s,，、;；]+/)
@@ -515,6 +786,7 @@ function searchSite(site, query, limit) {
     return (from > 0 ? '…' : '') + String(text).slice(from, to).replace(/\s+/g, ' ').trim() + (to < text.length ? '…' : '')
   }
   for (const item of site.items) {
+    if (category && item.category !== category) continue
     const title = item.title.toLowerCase()
     const summary = item.summary.toLowerCase()
     const itemPage = site.pages[item.route]
@@ -527,7 +799,7 @@ function searchSite(site, query, limit) {
       score += hits
     }
     if (score > 0) {
-      results.push({ score, matched, kind: '资讯', title: item.title, date: item.date, route: item.route, snippet: item.summary ? makeSnippet(item.summary) : '', summary: item.summary })
+      results.push({ score, matched, kind: '资讯', title: item.title, date: item.date, route: item.route, category: item.category || '', snippet: item.summary ? makeSnippet(item.summary) : '', summary: item.summary })
     }
   }
   // Listing pages repeat every item, so they would swamp real item hits: skip
@@ -539,7 +811,7 @@ function searchSite(site, query, limit) {
     if (route === '/cases' || route === '/canvas') return 0.5
     return 0.7
   }
-  for (const route of site.routes) {
+  if (!category) for (const route of site.routes) {
     if (route.includes('?') || route.startsWith('/items/') || SKIP_PAGES.has(route)) continue
     const page = site.pages[route]
     if (!page || !page.text) continue
@@ -562,11 +834,13 @@ function searchSite(site, query, limit) {
   return results.slice(0, limit)
 }
 
-function formatSearch(query, results, site) {
-  if (results.length === 0) return '没有匹配「' + query + '」的内容。试试更短的关键词，或用 take_latest 看最新内容。'
-  const lines = ['搜索「' + query + '」，命中 ' + results.length + ' 条（按相关度排序）：', dataLine(site), '']
+function formatSearch(query, results, site, category) {
+  const scope = category ? ' · 分类：' + categoryLabel(category) : ''
+  if (results.length === 0) return '没有匹配「' + query + '」' + scope + '的内容。试试更短的关键词、换个分类，或用 take_latest 看最新内容。'
+  const lines = ['搜索「' + query + '」' + scope + '，命中 ' + results.length + ' 条（按相关度排序）：', dataLine(site), '']
   results.forEach((hit, idx) => {
-    lines.push(String(idx + 1) + '. [' + hit.kind + '] ' + hit.title + (hit.date ? '（' + hit.date + '）' : ''))
+    const tag = hit.category ? categoryLabel(hit.category) : ''
+    lines.push(String(idx + 1) + '. [' + hit.kind + '] ' + (tag ? '「' + tag + '」' : '') + hit.title + (hit.date ? '（' + hit.date + '）' : ''))
     if (hit.snippet) lines.push('   ' + hit.snippet)
     lines.push('   读取：take_read target=' + hit.route)
     lines.push('   链接：' + urlFor(hit.route))
@@ -609,9 +883,9 @@ async function fetchStaticPage(exec, route) {
     const res = await fetch(url, { signal: exec && exec.signal, headers: { 'user-agent': UA } })
     if (!res.ok) return null
     const html = await res.text()
-    const text = htmlToText(html)
-    if (!text || text.length < 40) return null
-    return { title: pageTitle(html), text, date: extractDate(text) }
+    const record = pageRecord(route, html)
+    if (!record.text || record.text.length < 40) return null
+    return record
   } catch (err) {
     if (err && err.name === 'AbortError') throw err
     return null
@@ -649,6 +923,11 @@ function formatRead(route, page, maxChars) {
     lines.push('')
     lines.push('…（已截断，全文约 ' + body.length + ' 字；需要更多请提高 maxChars）')
   }
+  if (page.links && page.links.length > 0) {
+    lines.push('')
+    lines.push('原文/来源：')
+    for (const link of page.links) lines.push('- ' + link)
+  }
   return lines.join(NL)
 }
 
@@ -672,7 +951,7 @@ function clampInt(raw, fallback, min, max) {
 const takeLatestTool = {
   name: 'take_latest',
   description:
-    'List the latest content from Take / take.hk (an AI filmmaking creator resource site): either the latest daily briefings (AI 影像日报, including today\'s) or the latest selected news items. Returns date, title, summary and a link for each. Use when the user asks what is new, what happened today, or about the latest Take daily news.',
+    'List the latest content from Take / take.hk (an AI filmmaking creator resource site): either the latest daily briefings (AI 影像日报, including today\'s) or the latest selected news items. Returns date, title, category, summary and a link for each. Use when the user asks what is new, what happened today, or about the latest Take daily news.',
   parameters: {
     type: 'object',
     properties: {
@@ -680,6 +959,10 @@ const takeLatestTool = {
         type: 'string',
         enum: ['daily', 'news'],
         description: 'What to list: "daily" for AI 影像日报 briefings (default), "news" for the latest selected news items.',
+      },
+      category: {
+        type: 'string',
+        description: 'Optional category filter for kind="news": video-models, tools, works, industry, paper, tip or opinion (the site\'s own categories). Ignored for daily briefings.',
       },
       limit: {
         type: 'integer',
@@ -694,10 +977,11 @@ const takeLatestTool = {
   },
   async execute(args, exec) {
     const kind = args && args.kind === 'news' ? 'news' : 'daily'
+    const category = normalizeCategory(args && args.category)
     const limit = clampInt(args && args.limit, kind === 'news' ? 10 : 5, 1, 20)
     try {
       const site = await loadSite(exec)
-      return kind === 'news' ? formatNews(site, limit) : formatDailies(site, limit)
+      return kind === 'news' ? formatNews(site, limit, category) : formatDailies(site, limit)
     } catch (err) {
       if (kind !== 'daily') throw err
       // Feed fallback keeps the daily listing useful even if the snapshot fails.
@@ -716,13 +1000,17 @@ const takeLatestTool = {
 const takeSearchTool = {
   name: 'take_search',
   description:
-    'Full-text search across everything on Take / take.hk: 1400+ selected news items, all daily briefings and the 30 topic archives. Returns ranked hits with a snippet, the path to read in full and a link. Use when the user asks about a model, tool, creator, film, topic or event, or wants to find something on take.hk.',
+    'Full-text search across everything on Take / take.hk: 1400+ selected news items, all daily briefings and the 30 topic archives. Returns ranked hits with category, snippet, the path to read in full and a link. Use when the user asks about a model, tool, creator, film, topic or event, or wants to find something on take.hk.',
   parameters: {
     type: 'object',
     properties: {
       query: {
         type: 'string',
         description: 'Keywords to search for. Chinese and English both work; use short terms such as "可灵", "Sora", "Seedance".',
+      },
+      category: {
+        type: 'string',
+        description: 'Optional category filter: video-models, tools, works, industry, paper, tip or opinion. When set, only news items in that category are searched.',
       },
       limit: {
         type: 'integer',
@@ -739,10 +1027,11 @@ const takeSearchTool = {
   async execute(args, exec) {
     const query = collapse(args && args.query)
     if (!query) throw new Error('take_search needs a query string')
+    const category = normalizeCategory(args && args.category)
     const limit = clampInt(args && args.limit, 8, 1, 20)
     try {
       const site = await loadSite(exec)
-      return formatSearch(query, searchSite(site, query, limit), site)
+      return formatSearch(query, searchSite(site, query, limit, category), site, category)
     } catch (err) {
       // Last-resort fallback: search the public RSS dailies when the snapshot is
       // unavailable, so a temporary site problem still gives partial results.
@@ -772,7 +1061,7 @@ const takeSearchTool = {
 const takeReadTool = {
   name: 'take_read',
   description:
-    'Read any page of take.hk as clean plain text: a news item, a daily briefing (including today\'s), a topic archive, or a site page. Accepts a take.hk URL, a path like /daily/2026-11-03, /topics/google, /items/<id>, a bare item id, a date like 2026-11-03, or "today". Returns the title, link and full body text. Use after take_search / take_latest, or when the user pastes a take.hk link.',
+    'Read any page of take.hk as clean plain text: a news item, a daily briefing (including today\'s), a topic archive, or a site page. Accepts a take.hk URL, a path like /daily/2026-11-03, /topics/google, /items/<id>, a bare item id, a date like 2026-11-03, or "today". Returns the title, link, full body text and (for news items) the original source links. Use after take_search / take_latest, or when the user pastes a take.hk link.',
   parameters: {
     type: 'object',
     properties: {
@@ -861,6 +1150,13 @@ const TOOLS = [takeLatestTool, takeSearchTool, takeReadTool, takeTopicsTool, tak
 
 // Exported for the smoke test; not part of the plugin surface.
 export const tools = {
+  CATEGORIES,
+  categoryLabel,
+  normalizeCategory,
+  extractSourceLinks,
+  extractItemIds,
+  pageRecord,
+  buildSiteFromStream,
   decodeEntities,
   htmlToText,
   pageTitle,
@@ -881,8 +1177,15 @@ export const tools = {
   clampInt,
 }
 
-export function apply(ctx) {
-  console.log('[dsh-plugin-take] plugin loaded - Take (take.hk) snapshot reader')
+export function apply(ctx, config) {
+  if (config && typeof config === 'object') {
+    if (typeof config.diskCache === 'boolean') settings.diskCache = config.diskCache
+    if (Number.isFinite(config.ttlMinutes)) {
+      settings.ttlMinutes = Math.min(1440, Math.max(1, Math.floor(config.ttlMinutes)))
+    }
+  }
+  console.log('[dsh-plugin-take] plugin loaded - Take (take.hk) snapshot reader'
+    + ' (diskCache=' + settings.diskCache + ', ttl=' + settings.ttlMinutes + 'min)')
   if (!ctx || !ctx.tools || typeof ctx.tools.register !== 'function') {
     console.warn('[dsh-plugin-take] tools service not available; Take tools were not registered.')
     return
