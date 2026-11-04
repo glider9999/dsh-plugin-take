@@ -1,0 +1,52 @@
+{
+  "name": "dsh-plugin-take",
+  "version": "0.4.1",
+  "description": "Take (take.hk) for DeepSeek Harness: read all of take.hk — 1400+ selected AI film news items, daily briefings including today, 30 topic archives, full-text search and whole-page reading. Read-only, no key, no local data.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node scripts/smoke.mjs"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "take",
+    "take.hk",
+    "ai-film",
+    "ai-video",
+    "ai-news",
+    "daily-briefing",
+    "read-only"
+  ],
+  "author": "Take (take.hk)",
+  "homepage": "https://github.com/glider9999/dsh-plugin-take#readme",
+  "bugs": {
+    "url": "https://github.com/glider9999/dsh-plugin-take/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/glider9999/dsh-plugin-take.git"
+  }
+}

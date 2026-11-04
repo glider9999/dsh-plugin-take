@@ -1,0 +1,4 @@
+- insert:
+    - id: take-plugin
+      name: dsh-plugin-take
+      config: {}
