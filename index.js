@@ -30,8 +30,8 @@ export const inject = ['tools']
 
 const SITE = 'https://take.hk'
 const FEED_URL = SITE + '/feed.xml'
-const UA = 'dsh-plugin-take/0.6.0'
-const CACHE_SCHEMA = 2
+const UA = 'dsh-plugin-take/0.7.0'
+const CACHE_SCHEMA = 4
 const DISK_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const CACHE_DIR = process.env.DSH_PLUGIN_TAKE_CACHE_DIR ||
   join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'cache', 'dsh-plugin-take')
@@ -40,7 +40,7 @@ const MAX_PARTS = 30
 const NL = String.fromCharCode(10)
 
 // Runtime settings, filled from the plugin row's `config` (see Config below).
-const settings = { diskCache: true, ttlMinutes: 15 }
+const settings = { diskCache: true, ttlMinutes: 5, maxOutputChars: 40000, requestTimeoutMs: 20000 }
 
 function memoryTtlMs() {
   return settings.ttlMinutes * 60 * 1000
@@ -512,28 +512,67 @@ function assembleSite({ pages, index, titles, usedFastPath, stamp, categoryByIte
 
 // ------------------------------------------------------------- snapshot fetch
 
-async function fetchText(url, exec, asBuffer) {
-  const signal = exec && exec.signal ? exec.signal : undefined
-  const res = await fetch(url, { signal, headers: { 'user-agent': UA, 'accept-encoding': 'gzip' } })
-  if (!res.ok) return null
-  return asBuffer ? Buffer.from(await res.arrayBuffer()) : await res.text()
+function requestSignal(exec) {
+  const timeout = AbortSignal.timeout(Math.max(1000, Math.min(120000, settings.requestTimeoutMs)))
+  if (exec && exec.signal) return AbortSignal.any([exec.signal, timeout])
+  return timeout
+}
+
+async function fetchTextResult(url, exec, extraHeaders) {
+  try {
+    const res = await fetch(url, {
+      signal: requestSignal(exec),
+      headers: {
+        'user-agent': UA,
+        'accept-encoding': 'br, gzip, deflate',
+        ...(extraHeaders || {}),
+      },
+    })
+    return {
+      status: res.status,
+      ok: res.ok,
+      etag: res.headers.get('etag') || '',
+      lastModified: res.headers.get('last-modified') || '',
+      text: res.ok ? await res.text() : '',
+    }
+  } catch {
+    return null
+  }
+}
+
+// One cheap conditional request on the first part tells us whether the whole
+// snapshot changed; HTTP 304 means zero bytes and lets us extend the TTL. The
+// CDN hides ETag on gzip responses, so Last-Modified/If-Modified-Since is used.
+async function snapshotUnchanged(exec, previous) {
+  const headers = {}
+  if (previous && previous.lastModified) headers['if-modified-since'] = previous.lastModified
+  else if (previous && previous.etag) headers['if-none-match'] = previous.etag
+  else return false
+  const result = await fetchTextResult(SITE + '/data-1.txt', exec, headers)
+  return !!result && result.status === 304
 }
 
 async function fetchSnapshot(exec) {
   const initial = 10
   const first = await Promise.all(
-    Array.from({ length: initial }, (_, i) => fetchText(SITE + '/data-' + (i + 1) + '.txt', exec).catch(() => null)),
+    Array.from({ length: initial }, (_, i) => fetchTextResult(SITE + '/data-' + (i + 1) + '.txt', exec)),
   )
-  const parts = first.filter((part) => typeof part === 'string')
-  if (parts.length === 0) throw new Error('take.hk snapshot is unavailable (no data parts could be fetched)')
+  const parts = []
   let count = 0
-  while (count < first.length && typeof first[count] === 'string') count++
+  for (const result of first) {
+    if (!result || !result.ok) break
+    parts.push(result.text)
+    count++
+  }
+  if (parts.length === 0) throw new Error('take.hk snapshot is unavailable (no data parts could be fetched)')
+  const etag = (first[0] && first[0].etag) || ''
+  const lastModified = (first[0] && first[0].lastModified) || ''
   // Grow past 10 parts if the site ever splits the snapshot further.
-  let extra = first.length
+  let extra = initial
   while (extra === count && extra < MAX_PARTS) {
-    const next = await fetchText(SITE + '/data-' + (extra + 1) + '.txt', exec).catch(() => null)
-    if (typeof next !== 'string') break
-    parts.push(next)
+    const next = await fetchTextResult(SITE + '/data-' + (extra + 1) + '.txt', exec)
+    if (!next || !next.ok) break
+    parts.push(next.text)
     extra++
     count++
   }
@@ -548,13 +587,15 @@ async function fetchSnapshot(exec) {
     site = buildSiteFromBuffer(gunzipSync(compressed), ext.titles || {})
   }
   site.stamp = String(ext.v || '')
+  site.etag = etag
+  site.lastModified = lastModified
+  site.savedAt = Date.now()
   return site
 }
 
 // --------------------------------------------------------------- site cache
 
 let cache = { at: 0, site: null, pending: null }
-let refreshing = null
 
 function peekSite() {
   return cache.site && Date.now() - cache.at < memoryTtlMs() ? cache.site : null
@@ -569,14 +610,25 @@ function todayLocal() {
 // deleted at any time. A same-day cache answers instantly after a restart while
 // a background refresh still picks up new items.
 function siteToCacheBlob(site) {
-  return { schema: CACHE_SCHEMA, date: todayLocal(), stamp: site.stamp || '', pages: site.pages, items: site.items }
+  return {
+    schema: CACHE_SCHEMA,
+    date: todayLocal(),
+    stamp: site.stamp || '',
+    etag: site.etag || '',
+    lastModified: site.lastModified || '',
+    pages: site.pages,
+    items: site.items,
+  }
 }
 
 function reviveSite(blob) {
   if (!blob || blob.schema !== CACHE_SCHEMA || !blob.pages || typeof blob.pages !== 'object') return null
   if (Object.keys(blob.pages).length === 0) return null
   const items = Array.isArray(blob.items) ? blob.items : []
-  return finishSite({ pages: blob.pages, items, usedFastPath: true, stamp: blob.stamp || '' })
+  const site = finishSite({ pages: blob.pages, items, usedFastPath: true, stamp: blob.stamp || '' })
+  site.etag = blob.etag || ''
+  site.lastModified = blob.lastModified || ''
+  return site
 }
 
 function readDiskCache() {
@@ -607,38 +659,43 @@ function writeDiskCache(site) {
   }
 }
 
-function refreshInBackground(exec) {
-  if (refreshing) return
-  refreshing = fetchSnapshot(exec)
-    .then((site) => {
-      cache = { at: Date.now(), site, pending: null }
-      writeDiskCache(site)
-      return site
-    })
-    .catch(() => undefined)
-    .finally(() => { refreshing = null })
-}
-
 async function loadSite(exec) {
   const now = Date.now()
   if (cache.site && now - cache.at < memoryTtlMs()) return cache.site
+  // Single-flight: every concurrent tool call shares this one promise.
   if (cache.pending) return cache.pending
-  const disk = readDiskCache()
-  if (disk) {
-    cache = { at: now, site: disk, pending: null }
-    if (now - (disk.savedAt || 0) > memoryTtlMs()) refreshInBackground(exec)
-    return disk
-  }
-  cache.pending = fetchSnapshot(exec)
-    .then((site) => {
+  cache.pending = (async () => {
+    const previous = cache.site || readDiskCache()
+    if (previous) {
+      const age = now - (previous.savedAt || 0)
+      const canRevalidate = age <= DISK_CACHE_TTL_MS
+      if (canRevalidate && (await snapshotUnchanged(exec, previous))) {
+        // Nothing changed: zero bytes downloaded, just extend the freshness window.
+        previous.savedAt = now
+        previous.stale = false
+        cache = { at: now, site: previous, pending: null }
+        writeDiskCache(previous)
+        return previous
+      }
+    }
+    try {
+      const site = await fetchSnapshot(exec)
       cache = { at: Date.now(), site, pending: null }
       writeDiskCache(site)
       return site
-    })
-    .catch((err) => {
-      cache.pending = null
+    } catch (err) {
+      if (previous) {
+        // Graceful degradation: keep the last snapshot instead of failing a tool.
+        previous.stale = true
+        cache = { at: now, site: previous, pending: null }
+        return previous
+      }
       throw err
-    })
+    }
+  })().catch((err) => {
+    cache.pending = null
+    throw err
+  })
   return cache.pending
 }
 
@@ -672,7 +729,8 @@ function urlFor(route) {
 }
 
 function dataLine(site) {
-  return site && site.stamp ? '数据：take.hk 站点快照，更新于 ' + site.stamp : '数据：take.hk 站点快照'
+  const base = site && site.stamp ? '数据：take.hk 站点快照，更新于 ' + site.stamp : '数据：take.hk 站点快照'
+  return site && site.stale ? base + '（刷新失败，使用本地缓存）' : base
 }
 
 // ------------------------------------------------------------ take_latest
@@ -948,6 +1006,15 @@ function clampInt(raw, fallback, min, max) {
   return value
 }
 
+// Hard ceiling on any single tool result, so a long page or a broad search can
+// never blow up the conversation context.
+function capOutput(text) {
+  const value = typeof text === 'string' ? text : String(text)
+  const limit = Math.max(1000, Math.min(200000, settings.maxOutputChars))
+  if (value.length <= limit) return value
+  return value.slice(0, limit) + NL + '…[输出已截断：上限 ' + limit + ' 字符；完整内容见 take.hk]'
+}
+
 const takeLatestTool = {
   name: 'take_latest',
   description:
@@ -981,7 +1048,7 @@ const takeLatestTool = {
     const limit = clampInt(args && args.limit, kind === 'news' ? 10 : 5, 1, 20)
     try {
       const site = await loadSite(exec)
-      return kind === 'news' ? formatNews(site, limit, category) : formatDailies(site, limit)
+      return capOutput(kind === 'news' ? formatNews(site, limit, category) : formatDailies(site, limit))
     } catch (err) {
       if (kind !== 'daily') throw err
       // Feed fallback keeps the daily listing useful even if the snapshot fails.
@@ -992,7 +1059,7 @@ const takeLatestTool = {
         parts.push('   ' + entry.link)
         return parts.join(NL)
       })
-      return lines.join(NL + NL) + (lines.length ? '' : '（没有拿到任何日报）')
+      return capOutput(lines.join(NL + NL) + (lines.length ? '' : '（没有拿到任何日报）'))
     }
   },
 }
@@ -1031,7 +1098,7 @@ const takeSearchTool = {
     const limit = clampInt(args && args.limit, 8, 1, 20)
     try {
       const site = await loadSite(exec)
-      return formatSearch(query, searchSite(site, query, limit, category), site, category)
+      return capOutput(formatSearch(query, searchSite(site, query, limit, category), site, category))
     } catch (err) {
       // Last-resort fallback: search the public RSS dailies when the snapshot is
       // unavailable, so a temporary site problem still gives partial results.
@@ -1053,7 +1120,7 @@ const takeSearchTool = {
         if (entry.summary) lines.push('   ' + entry.summary.slice(0, 160))
         lines.push('   ' + entry.link)
       })
-      return lines.join(NL)
+      return capOutput(lines.join(NL))
     }
   },
 }
@@ -1081,11 +1148,11 @@ const takeReadTool = {
     return false
   },
   async execute(args, exec) {
-    const maxChars = clampInt(args && args.maxChars, 8000, 500, 20000)
+    const maxChars = clampInt(args && args.maxChars, 8000, 500, Math.min(20000, settings.maxOutputChars))
     const target = args && args.target
     // Uses the cached snapshot when warm; otherwise a single static page.
     const { route, page } = await readPage(exec, peekSite(), target)
-    return formatRead(route, page, maxChars)
+    return capOutput(formatRead(route, page, maxChars))
   },
 }
 
@@ -1117,7 +1184,7 @@ const takeTopicsTool = {
       lines.push('   读取：take_read target=' + topic.route)
       lines.push('   ' + urlFor(topic.route))
     })
-    return lines.join(NL)
+    return capOutput(lines.join(NL))
   },
 }
 
@@ -1132,7 +1199,7 @@ const takeLinksTool = {
     return true
   },
   async execute() {
-    return [
+    const lines = [
       'Take — AI 影像创作者资源站（take.hk）',
       '首页: https://take.hk/',
       'AI 影像日报: https://take.hk/#/daily',
@@ -1143,6 +1210,7 @@ const takeLinksTool = {
       'Agent 接入（MCP / RSS / API 说明）: https://take.hk/#/agent?tab=api',
       'RSS: https://take.hk/feed.xml',
     ].join(NL)
+    return capOutput(lines)
   },
 }
 
@@ -1175,6 +1243,8 @@ export const tools = {
   dataLine,
   todayLocal,
   clampInt,
+  capOutput,
+  settings,
 }
 
 export function apply(ctx, config) {
@@ -1183,9 +1253,16 @@ export function apply(ctx, config) {
     if (Number.isFinite(config.ttlMinutes)) {
       settings.ttlMinutes = Math.min(1440, Math.max(1, Math.floor(config.ttlMinutes)))
     }
+    if (Number.isFinite(config.maxOutputChars)) {
+      settings.maxOutputChars = Math.min(200000, Math.max(1000, Math.floor(config.maxOutputChars)))
+    }
+    if (Number.isFinite(config.requestTimeoutMs)) {
+      settings.requestTimeoutMs = Math.min(120000, Math.max(1000, Math.floor(config.requestTimeoutMs)))
+    }
   }
   console.log('[dsh-plugin-take] plugin loaded - Take (take.hk) snapshot reader'
-    + ' (diskCache=' + settings.diskCache + ', ttl=' + settings.ttlMinutes + 'min)')
+    + ' (diskCache=' + settings.diskCache + ', ttl=' + settings.ttlMinutes + 'min'
+    + ', maxOutput=' + settings.maxOutputChars + ', timeout=' + settings.requestTimeoutMs + 'ms)')
   if (!ctx || !ctx.tools || typeof ctx.tools.register !== 'function') {
     console.warn('[dsh-plugin-take] tools service not available; Take tools were not registered.')
     return

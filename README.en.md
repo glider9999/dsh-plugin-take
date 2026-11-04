@@ -58,8 +58,10 @@ Add `config` to the `take-plugin` row in the profile's `cordis.patch.yml`:
 - id: take-plugin
   name: dsh-plugin-take
   config:
-    diskCache: true      # cache public site content on disk (default true)
-    ttlMinutes: 15       # in-memory cache lifetime, 1-1440 minutes (default 15)
+    diskCache: true          # cache public site content on disk (default true)
+    ttlMinutes: 5            # snapshot freshness, 1-1440 minutes (default 5)
+    maxOutputChars: 40000    # per-call output ceiling (default 40000, truncated)
+    requestTimeoutMs: 20000  # per-request timeout (default 20000)
 ```
 
 For a strict no-write setup use `diskCache: false`: the plugin then only makes anonymous requests and writes nothing. Configuration is read at plugin load, so restart Harness after changing it.
@@ -83,9 +85,12 @@ For a strict no-write setup use `diskCache: false`: the plugin then only makes a
 
 ## Limits
 
-- **Cold start** (first call or expired cache): about 2.6 seconds, ~320 MB (streaming parser; no 70 MB buffer).
-- **Warm start** (same-day cache after a Harness restart): about 0.05 seconds, ~106 MB;
-  a background refresh picks up new items after the 15-minute in-memory TTL.
+- **Cold start** (first call or expired cache): about 2.3 seconds, ~350 MB (streaming parser; no 70 MB buffer).
+- **Warm start** (same-day cache after a Harness restart): about 0.8 seconds, ~170 MB, and it
+  first sends one `If-Modified-Since` conditional request: **HTTP 304 means zero bytes** and the
+  cache is simply revalidated; only a real change triggers a re-download.
+- Freshness defaults to **5 minutes**, and concurrent tool calls share a single in-flight request
+  (no cache stampede / duplicate 10 MB downloads).
 - If the snapshot is unavailable, `take_search` falls back to the public daily RSS feed
   instead of failing.
 - Categories come from the site's own `?category=` listing pages and cover roughly the

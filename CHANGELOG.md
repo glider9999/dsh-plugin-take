@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.0 — 2026-11-04
+
+- **Freshness aligned to 5 minutes**: `ttlMinutes` default is now 5 (was 15). When the cache
+  is stale, one conditional `If-Modified-Since` request on the first snapshot part answers
+  `304 Not Modified` (zero bytes) and simply extends the window; only a changed snapshot is
+  re-downloaded. (The CDN hides ETag on gzip responses, so Last-Modified is used.)
+- **Response compression**: snapshot requests ask for `br, gzip, deflate`, cutting the
+  snapshot transfer from ~10 MB to ~7.4 MB.
+- **Request timeout**: every request uses `AbortSignal.timeout` (`requestTimeoutMs`,
+  default 20 s) combined with the tool's own signal.
+- **Output ceiling**: `maxOutputChars` (default 40,000) caps every tool result, so a long
+  page or a broad search can never blow up the conversation context. `take_read` also
+  respects it for `maxChars`.
+- Single-flight deduplication and disk cache were already present; they are unchanged.
+- Graceful degradation: if a refresh fails, the last snapshot is served with a
+  "(刷新失败，使用本地缓存)" note instead of failing the tool.
+
 ## 0.6.1 — 2026-11-04
 
 - Fix: the 0.6.0 `export const Config` plain JSON-Schema object crashed activation

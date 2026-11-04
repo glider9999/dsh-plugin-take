@@ -1,4 +1,4 @@
-// Smoke test for dsh-plugin-take 0.6.1. Run: node scripts/smoke.mjs
+// Smoke test for dsh-plugin-take 0.7.0. Run: node scripts/smoke.mjs
 // Uses an in-memory snapshot fixture and a mock Cordis ctx — no network, no Harness.
 
 import { readFileSync } from 'node:fs'
@@ -7,6 +7,7 @@ import { gzipSync } from 'node:zlib'
 const NL = String.fromCharCode(10)
 const mod = await import('../index.js')
 const T = mod.tools
+const initialSettings = { ...T.settings }
 
 let checks = 0
 function check(name, ok, detail) {
@@ -101,6 +102,14 @@ check('cache blob rejects old schema', T.reviveSite({ schema: 1, pages: site.pag
 check('todayLocal format', /^\d{4}-\d{2}-\d{2}$/.test(T.todayLocal()))
 check('dataLine without stamp', T.dataLine(site) === '数据：take.hk 站点快照')
 check('dataLine with stamp', T.dataLine({ stamp: '2026-11-03 20:07' }).includes('2026-11-03 20:07'))
+check('cache blob keeps etag field', 'etag' in T.siteToCacheBlob(site))
+check('default ttl is 5 minutes', initialSettings.ttlMinutes === 5)
+check('default output cap is 40000', initialSettings.maxOutputChars === 40000)
+const oldCap = T.settings.maxOutputChars
+T.settings.maxOutputChars = 1000
+check('capOutput truncates', T.capOutput('x'.repeat(5000)).includes('输出已截断'))
+T.settings.maxOutputChars = oldCap
+check('capOutput passes short text', T.capOutput('ok') === 'ok')
 
 // route normalisation
 check('today shortcut', T.normalizeRoute('today') === '/today')
@@ -146,7 +155,7 @@ check('unmount unregisters tools', registered.length === 0)
 
 // ------------------------------------------------------- manifest/resources
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-check('version 0.6.1', manifest.version === '0.6.1')
+check('version 0.7.0', manifest.version === '0.7.0')
 check('dsh bundle patch', manifest.dsh && manifest.dsh.bundle && manifest.dsh.bundle.patch === './cordis.patch.yml')
 check('exports locale+icon', manifest.exports['./locale/*.json'] && manifest.exports['./icon'])
 for (const file of ['locale/en.json', 'locale/zh.json']) {
