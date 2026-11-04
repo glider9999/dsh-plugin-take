@@ -2,8 +2,11 @@
 
 ## 一、现状
 
-- **npm**：`dsh-plugin-take@0.4.0` 已公开发布（latest=0.4.0，维护者 `glider9999`）。
-- **GitHub**：仓库尚未创建；本目录已初始化为本地 git 仓库并完成首次提交，只等 remote。
+- **npm**：`dsh-plugin-take@0.4.1` 已公开发布（latest=0.4.1，维护者 `glider9999`）。
+- **GitHub**：仓库已上线 https://github.com/glider9999/dsh-plugin-take （public，15 个文件，main），
+  About 简介/Website(npm)/话题 `dsh-plugin` + `deepseek-harness` 均已设置。
+- **凭据**：gh CLI 2.103.3 已安装（`~/.local/bin/gh`）并完成网页授权（token 存 macOS 钥匙串），
+  `gh auth setup-git` 已配置，`git push` 链路验证通过。
 - 渠道核实（2026-11-04 实测，全部可达）：
   - GitHub 话题 `dsh-plugin`：https://github.com/topics/dsh-plugin ✔
   - 官方 Discussions「Show Your Plugins!」分类：https://github.com/deepseek-ai/deepseek-harness/discussions ✔
@@ -91,14 +94,14 @@ gh auth login
 
 ## 五、检查清单（修正版）
 
-- [x] npm 包已发布（0.4.0）
-- [ ] GitHub 仓库公开（等授权/仓库 URL）
-- [ ] 仓库话题 `dsh-plugin` 已加（授权后我执行）
+- [x] npm 包已发布（0.4.1 为 latest）
+- [x] GitHub 仓库公开：https://github.com/glider9999/dsh-plugin-take
+- [x] 仓库话题 `dsh-plugin`、`deepseek-harness` 已加；About 简介 + Website(npm) 已设置
 - [x] README 有清晰一句话介绍 + 安装命令 + 兼容版本 + 实际输出示例
 - [x] npm description / keywords 含 `dsh`、`deepseek-harness`、`dsh-plugin`
-- [ ] npm 0.4.1（README 更新后发布）
-- [ ] 官方 Discussions 发帖（你点发布）
-- [ ] 社区目录：plugin.dshx.dev / dsh-plugin.github.io / awesome-dsh-plugin（先等 GitHub 仓库，多数自动抓话题或支持作者 PR）
+- [x] npm 0.4.1（仓库链接/README 已同步）
+- [ ] 官方 Discussions 发帖（必须由你在浏览器点发布，草稿见本文第四节）
+- [ ] 社区目录：plugin.dshx.dev / dsh-plugin.github.io / awesome-dsh-plugin（多数自动抓 topic；awesome 列表可提 PR）
 
 ## 六、两个常见坑
 
