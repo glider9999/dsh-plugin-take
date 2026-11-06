@@ -41,7 +41,7 @@ After installing, the left sidebar (Plugins group) gains a **Take** icon — ref
 - daily briefings and topic pages render as structured entry cards (date, category, title, summary, thumbnail) extracted from the snapshot instead of one text wall;
 - **designed poster fallback** for items without an image (category palette + category glyph), so no blank thumbnails;
 - **bookmarks / read-later**: ☆ on cards or in the reader, stored in a "Saved" tab (browser localStorage);
-- **one-click share text**: copy a digest (title + top 5 entries + link) on daily/topic pages, or title+link on an article;
+- **one-click share**: X and Facebook web intents, a system share sheet (Web Share API — reaches WeChat apps on phones) and a WeChat/Moments helper dialog with copy buttons (a desktop browser cannot post to Moments directly);
 - staggered fade-in, hover lift, skeletons, and theme-aware colors;
 - data comes from the local `/take/api/*` read-only routes over the public site snapshot — same-origin, no extra key.
 

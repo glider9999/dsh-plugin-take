@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.0 — 2026-11-06
+
+- **Share bar** on article and daily/topic readers: X (tweet intent), Facebook
+  (sharer), system share via the Web Share API (mobile browsers can share to
+  WeChat apps), and a WeChat/Moments helper dialog with copy-text/copy-link
+  buttons (desktop browsers cannot post to Moments directly).
+- Share text is a digest without a duplicated link; copy feedback uses the toast.
+
 ## 0.11.0 — 2026-11-06
 
 - **Designed cover fallbacks**: items without an image now get a generated poster

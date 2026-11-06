@@ -175,6 +175,19 @@ window.__ModuleLoader__.load({
 .tk-action-ink{padding:6px 12px;border-radius:999px;border:1px solid var(--line,#e5e5e3);background:var(--surface,#f6f6f4);
   color:var(--ink-2,#4b4b50);font-size:12px;cursor:pointer;transition:.15s}
 .tk-action-ink:hover{border-color:var(--accent,#2563eb);color:var(--accent,#2563eb)}
+.tk-share{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 0 20px}
+.tk-share-label{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-3,#8a8a8f);margin-right:2px}
+.tk-share-btn{padding:5px 11px;border-radius:999px;border:1px solid var(--line,#e5e5e3);background:var(--surface,#f6f6f4);
+  color:var(--ink-2,#4b4b50);font-size:12px;cursor:pointer;transition:.15s;line-height:1.5}
+.tk-share-btn:hover{transform:translateY(-1px);border-color:var(--accent,#2563eb);color:var(--accent,#2563eb)}
+.tk-share-btn.primary{background:var(--ink,#1d1d1f);border-color:var(--ink,#1d1d1f);color:var(--bg,#fff)}
+.tk-modal-mask{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;
+  background:rgba(10,15,30,.45);backdrop-filter:blur(4px);animation:tkIn .2s both}
+.tk-modal{width:min(420px,86vw);background:var(--bg,#fff);color:var(--ink,#1d1d1f);border-radius:20px;
+  padding:24px;border:1px solid var(--line,#e5e5e3);box-shadow:0 30px 80px rgba(0,0,0,.28);animation:tkIn .25s both}
+.tk-modal h3{margin:0 0 8px;font-size:17px}
+.tk-modal p{margin:0 0 16px;font-size:13px;line-height:1.7;color:var(--ink-3,#8a8a8f)}
+.tk-modal-actions{display:flex;gap:8px;flex-wrap:wrap}
 @keyframes tkIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @keyframes tkSh{0%{background-position:100% 0}100%{background-position:0 0}}
 @media (max-width:720px){.tk-wrap{padding:18px 16px 70px}.tk-hero{padding:22px 20px}.tk-hero h2{font-size:20px}}
@@ -206,6 +219,14 @@ window.__ModuleLoader__.load({
       const m = String(date || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
       if (!m) return { main: date || '', sub: '' }
       return { main: m[2] + '/' + m[3], sub: m[1] }
+    }
+
+    function intentX(text, url) {
+      return 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(text) + '&url=' + encodeURIComponent(url)
+    }
+
+    function intentFacebook(url) {
+      return 'https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(url)
     }
 
     function Cover(props) {
@@ -314,12 +335,12 @@ window.__ModuleLoader__.load({
     }
 
     function Reader(props) {
-      const { detail, onBack, onOpenEntry, saved, onToggle, onCopy } = props
+      const { detail, onBack, onOpenEntry, saved, onToggle, onCopy, onShare, canNativeShare } = props
       const entries = Array.isArray(detail.entries) ? detail.entries : []
-      const digest = () => [detail.title]
+      const shareText = [detail.title]
         .concat(entries.slice(0, 5).map((entry, i) => (i + 1) + '. ' + entry.title))
-        .concat([detail.url])
         .join('\n')
+      const digest = () => [shareText, detail.url].join('\n')
       if (entries.length > 0) {
         const kicker = detail.kind === 'daily' ? 'AI 影像日报' : detail.kind === 'topic' ? '主题归档' : 'Take'
         return h('div', { className: 'tk-reader' },
@@ -335,6 +356,15 @@ window.__ModuleLoader__.load({
                 style: { textDecoration: 'none' },
               }, '在 take.hk 打开 ↗'),
             ),
+          ),
+          h('div', { className: 'tk-share' },
+            h('span', { className: 'tk-share-label' }, '分享'),
+            h('button', { type: 'button', className: 'tk-share-btn primary', onClick: () => onShare('x', { title: detail.title, text: shareText, url: detail.url }) }, 'X'),
+            h('button', { type: 'button', className: 'tk-share-btn', onClick: () => onShare('facebook', { title: detail.title, text: shareText, url: detail.url }) }, 'Facebook'),
+            h('button', { type: 'button', className: 'tk-share-btn', onClick: () => onShare('wechat', { title: detail.title, text: shareText, url: detail.url }) }, '微信 / 朋友圈'),
+            canNativeShare
+              ? h('button', { type: 'button', className: 'tk-share-btn', onClick: () => onShare('system', { title: detail.title, text: shareText, url: detail.url }) }, '系统分享')
+              : null,
           ),
           h('div', { className: 'tk-stack' },
             entries.map((entry, index) => h(EntryRow, {
@@ -359,6 +389,16 @@ window.__ModuleLoader__.load({
           detail.truncated ? h('span', null, '（已截断）') : null,
           h('a', { className: 'tk-link', href: detail.url, target: '_blank', rel: 'noreferrer' }, '在 take.hk 打开 ↗'),
         ),
+        h('div', { className: 'tk-share' },
+          h('span', { className: 'tk-share-label' }, '分享'),
+          h('button', { type: 'button', className: 'tk-share-btn primary', onClick: () => onShare('x', { title: detail.title, text: detail.title, url: detail.url }) }, 'X'),
+          h('button', { type: 'button', className: 'tk-share-btn', onClick: () => onShare('facebook', { title: detail.title, text: detail.title, url: detail.url }) }, 'Facebook'),
+          h('button', { type: 'button', className: 'tk-share-btn', onClick: () => onShare('wechat', { title: detail.title, text: detail.title, url: detail.url }) }, '微信 / 朋友圈'),
+          canNativeShare
+            ? h('button', { type: 'button', className: 'tk-share-btn', onClick: () => onShare('system', { title: detail.title, text: detail.title, url: detail.url }) }, '系统分享')
+            : null,
+          h('button', { type: 'button', className: 'tk-share-btn', onClick: () => onCopy(detail.title + '\n' + detail.url, '文案已复制') }, '复制文案'),
+        ),
         h('div', { className: 'tk-reader-body' }, detail.text),
         detail.links && detail.links.length
           ? h('div', { className: 'tk-sources' },
@@ -381,6 +421,7 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('')
       const [savedList, setSavedList] = useState(loadSaved)
       const [toast, setToast] = useState('')
+      const [shareModal, setShareModal] = useState(null)
       const requestId = useRef(0)
       const scroller = useRef(null)
       const toastTimer = useRef(null)
@@ -418,6 +459,27 @@ window.__ModuleLoader__.load({
         } catch {
           showToast('复制失败，请手动选择文本')
         }
+      }
+
+      function handleShare(type, payload) {
+        if (!payload) return
+        if (type === 'x') {
+          window.open(intentX(payload.text || payload.title || '', payload.url || ''), '_blank', 'noopener,noreferrer')
+          return
+        }
+        if (type === 'facebook') {
+          window.open(intentFacebook(payload.url || ''), '_blank', 'noopener,noreferrer')
+          return
+        }
+        if (type === 'system') {
+          if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+            navigator.share({ title: payload.title || '', text: payload.text || '', url: payload.url || '' }).catch(() => {})
+          } else {
+            copy((payload.text || payload.title || '') + '\n' + (payload.url || ''), '文案已复制')
+          }
+          return
+        }
+        setShareModal(payload)
       }
 
       async function loadTab(nextTab, cat, q) {
@@ -553,6 +615,8 @@ window.__ModuleLoader__.load({
                 saved: (route) => isSaved(route || (detail && detail.route)),
                 onToggle: toggleSaved,
                 onCopy: copy,
+                onShare: handleShare,
+                canNativeShare: typeof navigator !== 'undefined' && typeof navigator.share === 'function',
               })
             : h('div', null,
                 tab === 'daily' && !submitted && !loading ? hero : null,
@@ -580,6 +644,19 @@ window.__ModuleLoader__.load({
             '只读浏览 · 数据来自 take.hk 公开站点快照 · 与 take_* 工具同源',
           ),
         ),
+        shareModal
+          ? h('div', { className: 'tk-modal-mask', onClick: () => setShareModal(null) },
+              h('div', { className: 'tk-modal', onClick: (event) => event.stopPropagation() },
+                h('h3', null, '分享到微信 / 朋友圈'),
+                h('p', null, '浏览器无法直接调起微信朋友圈。先复制文案和链接，在微信里粘贴发布即可；在手机浏览器打开本页时，可用「系统分享」直接分享到微信。'),
+                h('div', { className: 'tk-modal-actions' },
+                  h('button', { type: 'button', className: 'tk-action-ink', onClick: () => copy((shareModal.text || shareModal.title || '') + '\n' + (shareModal.url || ''), '文案已复制') }, '复制文案'),
+                  h('button', { type: 'button', className: 'tk-action-ink', onClick: () => copy(shareModal.url || '', '链接已复制') }, '复制链接'),
+                  h('button', { type: 'button', className: 'tk-action-ink', onClick: () => setShareModal(null) }, '关闭'),
+                ),
+              ),
+            )
+          : null,
         toast ? h('div', { className: 'tk-toast' }, toast) : null,
       )
     }

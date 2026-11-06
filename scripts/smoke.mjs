@@ -1,4 +1,4 @@
-// Smoke test for dsh-plugin-take 0.11.0. Run: node scripts/smoke.mjs
+// Smoke test for dsh-plugin-take 0.12.0. Run: node scripts/smoke.mjs
 // Uses an in-memory snapshot fixture and a mock Cordis ctx — no network, no Harness.
 
 import { readFileSync } from 'node:fs'
@@ -175,7 +175,7 @@ check('unmount unregisters tools', registered.length === 0)
 
 // ------------------------------------------------------- manifest/resources
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-check('version 0.11.0', manifest.version === '0.11.0')
+check('version 0.12.0', manifest.version === '0.12.0')
 check('dsh bundle patch', manifest.dsh && manifest.dsh.bundle && manifest.dsh.bundle.patch === './cordis.patch.yml')
 check('exports locale+icon', manifest.exports['./locale/*.json'] && manifest.exports['./icon'])
 for (const file of ['locale/en.json', 'locale/zh.json']) {
