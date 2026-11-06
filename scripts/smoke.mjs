@@ -1,4 +1,4 @@
-// Smoke test for dsh-plugin-take 0.9.0. Run: node scripts/smoke.mjs
+// Smoke test for dsh-plugin-take 0.10.0. Run: node scripts/smoke.mjs
 // Uses an in-memory snapshot fixture and a mock Cordis ctx — no network, no Harness.
 
 import { readFileSync } from 'node:fs'
@@ -25,6 +25,7 @@ const snapshot = {
       '<div>当日动态</div><div>11 月 3 日 · 3 条动态</div><div>帧 X · @tester</div>' +
       '<div>可灵 5.0 发布：视频生成更快</div>' +
       '<div>截至 2026-11-03，快手宣布可灵 5.0 上线，支持 30 秒长镜头 &amp; 原生音频。</div>' +
+      '<a href="#/items/' + itemId + '">相关报道</a>' +
       '<button>原文</button></div>',
     ['/items/' + itemId]:
       '<div><!--TITLE:可灵 5.0 长镜头测试--><div>量子位 · 2026-11-03 09:00</div>' +
@@ -36,7 +37,7 @@ const snapshot = {
       '<nav>菜单</nav></div>',
     '/all?category=tools':
       '<div><!--TITLE:全部 AI 影像动态 · AI 影像工具--><a href="#/items/' + itemId + '">可灵 5.0 长镜头测试</a></div>',
-    '/topics/kling': '<div><!--TITLE:可灵 / Kling--><div>返回全部主题</div><div>量子位 · 2026-11-02</div></div>',
+    '/topics/kling': '<div><!--TITLE:可灵 / Kling--><a href="#/items/' + itemId + '">可灵 5.0 长镜头测试</a><div>返回全部主题</div><div>量子位 · 2026-11-02</div></div>',
     '/weekly': '<div><!--TITLE:AI 影像周报--><div>还没有发布 AI 影像周报</div></div>',
   },
   index: {
@@ -125,6 +126,8 @@ const searchApi = T.apiSearchPayload(site, '可灵', 5, 'tools')
 check('api search payload', searchApi.results.length >= 1 && searchApi.results[0].route.startsWith('/items/'))
 const topicsApi = T.apiTopicsPayload(site)
 check('api topics payload', topicsApi.topics.length === 1 && topicsApi.topics[0].route === '/topics/kling')
+check('daily page exposes structured entries', Array.isArray(site.pages['/daily/2026-11-03'].items) && site.pages['/daily/2026-11-03'].items.includes(itemId))
+check('topic page exposes structured entries', Array.isArray(site.pages['/topics/kling'].items) && site.pages['/topics/kling'].items.includes(itemId))
 const pkgJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 check('client module exists', pkgJson.exports['./client'] === './client.js' && pkgJson.dsh.client.platform === 'web')
 
@@ -172,7 +175,7 @@ check('unmount unregisters tools', registered.length === 0)
 
 // ------------------------------------------------------- manifest/resources
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-check('version 0.9.0', manifest.version === '0.9.0')
+check('version 0.10.0', manifest.version === '0.10.0')
 check('dsh bundle patch', manifest.dsh && manifest.dsh.bundle && manifest.dsh.bundle.patch === './cordis.patch.yml')
 check('exports locale+icon', manifest.exports['./locale/*.json'] && manifest.exports['./icon'])
 for (const file of ['locale/en.json', 'locale/zh.json']) {

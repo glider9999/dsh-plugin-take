@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0 — 2026-11-06
+
+- **Structured daily & topic pages**: the snapshot parser now records which
+  items a daily briefing or topic archive links to; `/take/api/read` returns
+  them as structured `entries` (title, date, category, summary, cover, route).
+  The reader renders them as entry cards with thumbnails, and clicking one
+  opens that article — no more plain-text wall for daily/topic pages.
+- Cache schema bumped for the new entry lists.
+
 ## 0.9.0 — 2026-11-06
 
 - **Designed Take page**: magazine-style layout with a hero card for today's

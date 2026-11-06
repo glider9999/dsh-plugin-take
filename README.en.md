@@ -38,6 +38,7 @@ After installing, the left sidebar (Plugins group) gains a **Take** icon — ref
 - tabs for daily briefings, selected news and topic archives; 7 category chips on the news tab;
 - a global search box whose results render as cards too;
 - click any item for a reading view with cover, body text, original source links and a jump to take.hk;
+- daily briefings and topic pages render as structured entry cards (date, category, title, summary, thumbnail) extracted from the snapshot instead of one text wall;
 - staggered fade-in, hover lift, skeletons, and theme-aware colors;
 - data comes from the local `/take/api/*` read-only routes over the public site snapshot — same-origin, no extra key.
 

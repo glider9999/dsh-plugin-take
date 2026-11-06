@@ -30,8 +30,8 @@ export const inject = ['tools', 'webServer']
 
 const SITE = 'https://take.hk'
 const FEED_URL = SITE + '/feed.xml'
-const UA = 'dsh-plugin-take/0.9.0'
-const CACHE_SCHEMA = 5
+const UA = 'dsh-plugin-take/0.10.0'
+const CACHE_SCHEMA = 6
 const DISK_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const CACHE_DIR = process.env.DSH_PLUGIN_TAKE_CACHE_DIR ||
   join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'cache', 'dsh-plugin-take')
@@ -186,6 +186,10 @@ function pageRecord(route, html) {
     if (links.length > 0) record.links = links
     const image = extractImage(html)
     if (image) record.image = image
+  }
+  if (route.startsWith('/daily/') || route.startsWith('/topics/')) {
+    const ids = extractItemIds(html)
+    if (ids.length > 0) record.items = ids.slice(0, 60)
   }
   return record
 }
@@ -1084,11 +1088,31 @@ function apiTopicsPayload(site) {
   }
 }
 
+function apiEntry(item) {
+  return {
+    id: item.id,
+    title: item.title,
+    date: item.date || '',
+    summary: item.summary || '',
+    route: item.route,
+    url: urlFor(item.route),
+    category: item.category || '',
+    categoryLabel: categoryLabel(item.category),
+    image: item.image || '',
+  }
+}
+
 async function apiReadPayload(target, maxChars) {
-  const { route, page } = await readPage(undefined, null, target)
+  const site = await loadSite(undefined)
+  const { route, page } = await readPage(undefined, site, target)
   const body = cleanReadBody(page.title || route, page.text)
+  const itemMap = new Map(site.items.map((item) => [item.id, item]))
+  const entries = Array.isArray(page.items)
+    ? page.items.map((id) => itemMap.get(id)).filter(Boolean).map(apiEntry)
+    : []
   return {
     route,
+    kind: route.startsWith('/daily/') ? 'daily' : route.startsWith('/topics/') ? 'topic' : 'page',
     title: page.title || route,
     url: urlFor(route),
     text: body.length > maxChars ? body.slice(0, maxChars) : body,
@@ -1096,6 +1120,7 @@ async function apiReadPayload(target, maxChars) {
     totalChars: body.length,
     links: page.links || [],
     image: page.image || '',
+    entries,
   }
 }
 

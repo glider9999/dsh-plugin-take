@@ -107,6 +107,29 @@ window.__ModuleLoader__.load({
 .tk-reader h2{font-size:27px;line-height:1.4;margin:0 0 10px;letter-spacing:.1px}
 .tk-reader-meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--ink-3,#8a8a8f);margin-bottom:18px}
 .tk-reader-body{white-space:pre-wrap;font-size:14.5px;line-height:1.95;color:var(--ink,#1d1d1f);word-break:break-word}
+.tk-reader-hero{position:relative;overflow:hidden;border-radius:20px;padding:26px 28px;color:#fff;margin-bottom:22px;
+  background:linear-gradient(118deg,#0b1220 0%,#12224a 38%,#1f3f8f 68%,#6d28d9 100%);
+  box-shadow:0 18px 44px rgba(15,23,42,.20)}
+.tk-reader-hero:before{content:"";position:absolute;inset:-50% -15% auto auto;width:460px;height:460px;
+  background:radial-gradient(circle,rgba(255,255,255,.18),transparent 62%);pointer-events:none}
+.tk-reader-hero h2{position:relative;font-size:24px;line-height:1.38;margin:8px 0 8px;font-weight:750}
+.tk-reader-hero p{position:relative;margin:0;font-size:13px;opacity:.78;line-height:1.7}
+.tk-reader-hero .tk-kicker{position:relative;font-size:11px;letter-spacing:.3em;text-transform:uppercase;opacity:.7}
+.tk-reader-hero .tk-hero-actions{position:relative;margin-top:16px}
+.tk-entry{display:flex;gap:14px;align-items:flex-start;padding:14px;cursor:pointer;animation:tkIn .35s both;
+  border:1px solid var(--line,#e5e5e3);border-radius:16px;background:var(--surface,#f6f6f4);
+  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease}
+.tk-entry:hover{transform:translateY(-2px);box-shadow:0 12px 26px rgba(15,23,42,.10);border-color:rgba(37,99,235,.35)}
+.tk-thumb{flex:none;width:104px;height:78px;border-radius:11px;overflow:hidden;
+  background:linear-gradient(135deg,#1e2a4a,#3b4d7d 55%,#7c3aed)}
+.tk-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.tk-entry-main{min-width:0;flex:1}
+.tk-entry-meta{display:flex;gap:8px;align-items:center;font-size:11.5px;color:var(--ink-3,#8a8a8f);margin-bottom:5px}
+.tk-entry-title{font-size:14.5px;font-weight:650;line-height:1.5;color:var(--ink,#1d1d1f);margin-bottom:4px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tk-entry-sum{font-size:12.5px;line-height:1.65;color:var(--ink-3,#8a8a8f);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+@media (max-width:520px){.tk-thumb{width:76px;height:60px}.tk-reader-hero{padding:20px}}
 .tk-sources{margin-top:26px;padding-top:16px;border-top:1px solid var(--line,#e5e5e3);font-size:12.5px}
 .tk-sources h4{margin:0 0 8px;font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-3,#8a8a8f)}
 .tk-sources a{display:block;color:var(--accent,#2563eb);text-decoration:none;margin-bottom:6px;word-break:break-all}
@@ -206,8 +229,54 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function EntryRow(props) {
+      const { entry, index, onOpen } = props
+      function open() { onOpen({ route: entry.route, id: entry.id }) }
+      return h('article', {
+        className: 'tk-entry',
+        style: { animationDelay: Math.min(index || 0, 14) * 24 + 'ms' },
+        onClick: open, role: 'button', tabIndex: 0,
+        onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') open() },
+      },
+        h('div', { className: 'tk-thumb' },
+          entry.image ? h('img', { src: entry.image, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer' }) : null,
+        ),
+        h('div', { className: 'tk-entry-main' },
+          h('div', { className: 'tk-entry-meta' },
+            entry.date ? h('span', null, entry.date) : null,
+            entry.categoryLabel ? h('span', { className: 'tk-pill' }, entry.categoryLabel) : null,
+          ),
+          h('div', { className: 'tk-entry-title' }, entry.title),
+          entry.summary ? h('div', { className: 'tk-entry-sum' }, entry.summary) : null,
+        ),
+      )
+    }
+
     function Reader(props) {
-      const { detail, onBack } = props
+      const { detail, onBack, onOpenEntry } = props
+      const entries = Array.isArray(detail.entries) ? detail.entries : []
+      if (entries.length > 0) {
+        const kicker = detail.kind === 'daily' ? 'AI 影像日报' : detail.kind === 'topic' ? '主题归档' : 'Take'
+        return h('div', { className: 'tk-reader' },
+          h('button', { type: 'button', className: 'tk-back', onClick: onBack }, '← 返回'),
+          h('div', { className: 'tk-reader-hero' },
+            h('div', { className: 'tk-kicker' }, kicker),
+            h('h2', null, detail.title),
+            h('p', null, entries.length + ' 条内容 · 点击任意条目阅读全文'),
+            h('div', { className: 'tk-hero-actions' },
+              h('a', {
+                className: 'tk-btn-ghost', href: detail.url, target: '_blank', rel: 'noreferrer',
+                style: { textDecoration: 'none' },
+              }, '在 take.hk 打开 ↗'),
+            ),
+          ),
+          h('div', { className: 'tk-stack' },
+            entries.map((entry, index) => h(EntryRow, {
+              key: (entry.route || '') + index, entry, index, onOpen: onOpenEntry,
+            })),
+          ),
+        )
+      }
       return h('div', { className: 'tk-reader' },
         h('button', { type: 'button', className: 'tk-back', onClick: onBack }, '← 返回'),
         detail.image
@@ -376,7 +445,7 @@ window.__ModuleLoader__.load({
             : null,
           error ? h('div', { className: 'tk-error' }, '加载失败：' + error) : null,
           detail
-            ? h(Reader, { detail, onBack: () => setDetail(null) })
+            ? h(Reader, { detail, onBack: () => setDetail(null), onOpenEntry: openItem })
             : h('div', null,
                 tab === 'daily' && !submitted && !loading ? hero : null,
                 showSkeleton
