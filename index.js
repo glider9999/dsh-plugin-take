@@ -1,4 +1,4 @@
-// dsh-plugin-take 0.5.0 — read all of Take (take.hk) inside DeepSeek Harness.
+// dsh-plugin-take 0.8.0 — Take (take.hk) inside DeepSeek Harness: agent tools + Web UI page.
 //
 // Data source (read-only, no key, no account):
 // - take.hk is a static snapshot site. Its pages are generated into
@@ -26,11 +26,11 @@ import { Readable } from 'node:stream'
 import { createGunzip, gunzipSync, gzipSync } from 'node:zlib'
 
 export const name = 'take-plugin'
-export const inject = ['tools']
+export const inject = ['tools', 'webServer']
 
 const SITE = 'https://take.hk'
 const FEED_URL = SITE + '/feed.xml'
-const UA = 'dsh-plugin-take/0.7.0'
+const UA = 'dsh-plugin-take/0.8.0'
 const CACHE_SCHEMA = 4
 const DISK_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const CACHE_DIR = process.env.DSH_PLUGIN_TAKE_CACHE_DIR ||
@@ -989,6 +989,142 @@ function formatRead(route, page, maxChars) {
   return lines.join(NL)
 }
 
+
+// ------------------------------------------------------------- web ui API
+//
+// Same-origin JSON routes consumed by the browser half (client.js). The page
+// renders a read-only browser for take.hk: search, daily briefings, selected
+// news, topic archives and an in-page reader.
+
+function sendJson(res, status, payload) {
+  if (res.headersSent) { res.end(); return }
+  const body = JSON.stringify(payload)
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'content-length': Buffer.byteLength(body),
+  })
+  res.end(body)
+}
+
+function apiNewsPayload(site, limit, category) {
+  const pool = category ? site.items.filter((item) => item.category === category) : site.items
+  return {
+    stamp: site.stamp || '',
+    total: pool.length,
+    items: pool.filter((item) => item.date).slice(0, limit).map((item) => ({
+      id: item.id,
+      title: item.title,
+      date: item.date,
+      summary: item.summary || '',
+      route: item.route,
+      url: urlFor(item.route),
+      category: item.category || '',
+      categoryLabel: categoryLabel(item.category),
+    })),
+  }
+}
+
+function apiDailyPayload(site, limit) {
+  return {
+    stamp: site.stamp || '',
+    dailies: site.dailies.slice(0, limit).map((daily) => {
+      const page = site.pages[daily.route]
+      const digestLine = page
+        ? page.text
+            .split('\n')
+            .map((line) => line.trim())
+            .find((line) => line.length >= 12 && !/^帧\s/.test(line) && !/条动态/.test(line) && line !== '当日动态')
+        : ''
+      return {
+        date: daily.date,
+        title: daily.title,
+        route: daily.route,
+        url: urlFor(daily.route),
+        summary: digestLine ? digestLine.slice(0, 200) : '',
+      }
+    }),
+  }
+}
+
+function apiSearchPayload(site, query, limit, category) {
+  return {
+    stamp: site.stamp || '',
+    results: searchSite(site, query, limit, category).map((hit) => ({
+      kind: hit.kind,
+      title: hit.title,
+      date: hit.date || '',
+      route: hit.route,
+      url: urlFor(hit.route),
+      snippet: hit.snippet || '',
+      category: hit.category || '',
+      categoryLabel: categoryLabel(hit.category || ''),
+    })),
+  }
+}
+
+function apiTopicsPayload(site) {
+  return {
+    stamp: site.stamp || '',
+    topics: site.topics.map((topic) => ({ title: topic.title, route: topic.route, url: urlFor(topic.route) })),
+  }
+}
+
+async function apiReadPayload(target, maxChars) {
+  const { route, page } = await readPage(undefined, null, target)
+  const body = cleanReadBody(page.title || route, page.text)
+  return {
+    route,
+    title: page.title || route,
+    url: urlFor(route),
+    text: body.length > maxChars ? body.slice(0, maxChars) : body,
+    truncated: body.length > maxChars,
+    totalChars: body.length,
+    links: page.links || [],
+  }
+}
+
+async function handleTakeApi(ctx, req, res) {
+  try {
+    // This API only serves read-only public take.hk content, so it stays open to
+    // the local Web UI instead of requiring the peer admission used by plugin
+    // APIs that read or write user data.
+    const url = new URL(req.url || '/', 'http://localhost')
+    const path = url.pathname.replace(/^\/take\/api/, '')
+    const limit = Math.max(1, Math.min(60, Number(url.searchParams.get('limit')) || 20))
+    const category = normalizeCategory(url.searchParams.get('category') || '')
+    if (path === '/summary') {
+      const site = await loadSite(undefined)
+      sendJson(res, 200, {
+        stamp: site.stamp || '',
+        counts: { items: site.items.length, dailies: site.dailies.length, topics: site.topics.length },
+        latestDaily: site.dailies[0]
+          ? { date: site.dailies[0].date, title: site.dailies[0].title, route: site.dailies[0].route }
+          : null,
+      })
+      return
+    }
+    if (path === '/daily') { sendJson(res, 200, apiDailyPayload(await loadSite(undefined), limit)); return }
+    if (path === '/news') { sendJson(res, 200, apiNewsPayload(await loadSite(undefined), limit, category)); return }
+    if (path === '/topics') { sendJson(res, 200, apiTopicsPayload(await loadSite(undefined))); return }
+    if (path === '/search') {
+      const query = collapse(url.searchParams.get('q') || '')
+      if (!query) { sendJson(res, 400, { error: 'missing q' }); return }
+      sendJson(res, 200, apiSearchPayload(await loadSite(undefined), query, limit, category))
+      return
+    }
+    if (path === '/read') {
+      const target = url.searchParams.get('target') || ''
+      const maxChars = Math.max(200, Math.min(20000, Number(url.searchParams.get('maxChars')) || 8000))
+      sendJson(res, 200, await apiReadPayload(target, maxChars))
+      return
+    }
+    sendJson(res, 404, { error: 'not found' })
+  } catch (err) {
+    sendJson(res, 502, { error: err && err.message ? err.message : String(err) })
+  }
+}
+
 // ---------------------------------------------------------------- the tools
 
 function textOutput() {
@@ -1245,6 +1381,11 @@ export const tools = {
   clampInt,
   capOutput,
   settings,
+  apiNewsPayload,
+  apiDailyPayload,
+  apiSearchPayload,
+  apiTopicsPayload,
+  sendJson,
 }
 
 export function apply(ctx, config) {
@@ -1277,5 +1418,14 @@ export function apply(ctx, config) {
         console.warn('[dsh-plugin-take] failed to register tool ' + definition.name + ': ' + (err && err.message ? err.message : String(err)))
       }
     })
+  }
+  const webServer = ctx.webServer || (typeof ctx.get === 'function' ? ctx.get('webServer') : undefined)
+  if (webServer && typeof webServer.register === 'function') {
+    ctx.effect(() => webServer.register({
+      kind: 'prefix',
+      path: '/take/api',
+      handler: (req, res) => handleTakeApi(ctx, req, res),
+    }))
+    console.log('[dsh-plugin-take] web ui api registered at /take/api')
   }
 }

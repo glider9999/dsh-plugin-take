@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.0 — 2026-11-06
+
+- **Web UI page**: the bundle now ships a browser half (`client.js`) that adds a
+  **Take** entry to the left sidebar and a matching main panel: daily briefings,
+  selected news with category filters, topic archives, full-text search and an
+  in-page reader with source links.
+- **Local read-only API**: the Host half registers `/take/api/{summary,daily,news,topics,search,read}`
+  on the Web server; the page calls these same-origin routes, so no CORS and no
+  extra keys. The API serves only public take.hk snapshot content.
+- Bundle manifest: `dsh.client` (web, loaded immediately) and `./client` export added.
+
 ## 0.7.0 — 2026-11-04
 
 - **Freshness aligned to 5 minutes**: `ttlMinutes` default is now 5 (was 15). When the cache

@@ -30,6 +30,17 @@ dsh plugin --profile <your-profile> add dsh-plugin-take
 | `take_topics` | List the 30 topic archives |
 | `take_links` | Main entry points: home, daily, hot, topics, cases, canvas, Agent/API page, RSS |
 
+## Web UI page (new in 0.8.0)
+
+After installing, the left sidebar (Plugins group) gains a **Take** icon — refresh the page once. It opens a read-only take.hk browser:
+
+- tabs for daily briefings, selected news and topic archives;
+- a global search box, plus 7 category filters on the news tab;
+- click any item to read it inline and jump to the original take.hk page;
+- data comes from the local `/take/api/*` read-only routes over the public site snapshot — same-origin, no extra key.
+
+The page is another view over the same snapshot the `take_*` agent tools use.
+
 ### Example output in Harness
 
 ```text

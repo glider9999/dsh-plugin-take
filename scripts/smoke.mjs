@@ -1,4 +1,4 @@
-// Smoke test for dsh-plugin-take 0.7.0. Run: node scripts/smoke.mjs
+// Smoke test for dsh-plugin-take 0.8.0. Run: node scripts/smoke.mjs
 // Uses an in-memory snapshot fixture and a mock Cordis ctx — no network, no Harness.
 
 import { readFileSync } from 'node:fs'
@@ -111,6 +111,20 @@ check('capOutput truncates', T.capOutput('x'.repeat(5000)).includes('输出已�
 T.settings.maxOutputChars = oldCap
 check('capOutput passes short text', T.capOutput('ok') === 'ok')
 
+// Web UI API payload builders
+const newsApi = T.apiNewsPayload(site, 10, '')
+check('api news payload', newsApi.items.length === 1 && newsApi.items[0].url.includes('take.hk'))
+const newsFiltered = T.apiNewsPayload(site, 10, 'tools')
+check('api news category filter', newsFiltered.items.length === 1 && newsFiltered.items[0].categoryLabel === 'AI 影像工具')
+const dailyApi = T.apiDailyPayload(site, 5)
+check('api daily payload', dailyApi.dailies.length === 1 && dailyApi.dailies[0].date === '2026-11-03')
+const searchApi = T.apiSearchPayload(site, '可灵', 5, 'tools')
+check('api search payload', searchApi.results.length >= 1 && searchApi.results[0].route.startsWith('/items/'))
+const topicsApi = T.apiTopicsPayload(site)
+check('api topics payload', topicsApi.topics.length === 1 && topicsApi.topics[0].route === '/topics/kling')
+const pkgJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+check('client module exists', pkgJson.exports['./client'] === './client.js' && pkgJson.dsh.client.platform === 'web')
+
 // route normalisation
 check('today shortcut', T.normalizeRoute('today') === '/today')
 check('date shortcut', T.normalizeRoute('2026-11-03') === '/daily/2026-11-03')
@@ -155,7 +169,7 @@ check('unmount unregisters tools', registered.length === 0)
 
 // ------------------------------------------------------- manifest/resources
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-check('version 0.7.0', manifest.version === '0.7.0')
+check('version 0.8.0', manifest.version === '0.8.0')
 check('dsh bundle patch', manifest.dsh && manifest.dsh.bundle && manifest.dsh.bundle.patch === './cordis.patch.yml')
 check('exports locale+icon', manifest.exports['./locale/*.json'] && manifest.exports['./icon'])
 for (const file of ['locale/en.json', 'locale/zh.json']) {
