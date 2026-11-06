@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.0 — 2026-11-06
+
+- **Designed cover fallbacks**: items without an image now get a generated poster
+  cover (category palette gradient + category glyph) instead of an empty block.
+- **Bookmarks / read-later**: star any card or article, persisted in the browser
+  (`localStorage`), with a "Saved" tab and unstar support.
+- **Copy share text**: daily/topic readers copy a digest (title + top entries +
+  link); article readers copy title + link, with a toast feedback.
+- Inspired by the card-wall / one-tap-copy patterns of the 自媒体工作台 plugin.
+
 ## 0.10.0 — 2026-11-06
 
 - **Structured daily & topic pages**: the snapshot parser now records which

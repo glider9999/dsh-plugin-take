@@ -39,6 +39,9 @@ After installing, the left sidebar (Plugins group) gains a **Take** icon — ref
 - a global search box whose results render as cards too;
 - click any item for a reading view with cover, body text, original source links and a jump to take.hk;
 - daily briefings and topic pages render as structured entry cards (date, category, title, summary, thumbnail) extracted from the snapshot instead of one text wall;
+- **designed poster fallback** for items without an image (category palette + category glyph), so no blank thumbnails;
+- **bookmarks / read-later**: ☆ on cards or in the reader, stored in a "Saved" tab (browser localStorage);
+- **one-click share text**: copy a digest (title + top 5 entries + link) on daily/topic pages, or title+link on an article;
 - staggered fade-in, hover lift, skeletons, and theme-aware colors;
 - data comes from the local `/take/api/*` read-only routes over the public site snapshot — same-origin, no extra key.
 
