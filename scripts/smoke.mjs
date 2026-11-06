@@ -1,4 +1,4 @@
-// Smoke test for dsh-plugin-take 0.8.0. Run: node scripts/smoke.mjs
+// Smoke test for dsh-plugin-take 0.9.0. Run: node scripts/smoke.mjs
 // Uses an in-memory snapshot fixture and a mock Cordis ctx — no network, no Harness.
 
 import { readFileSync } from 'node:fs'
@@ -29,6 +29,7 @@ const snapshot = {
     ['/items/' + itemId]:
       '<div><!--TITLE:可灵 5.0 长镜头测试--><div>量子位 · 2026-11-03 09:00</div>' +
       '<div>AI 导读</div><div>可灵 5.0 支持 30 秒长镜头。</div><div>正文独有词：fixturebodytag</div>' +
+      '<img src="https://i.ytimg.com/vi/test/hqdefault.jpg" alt="cover">' +
       '<a href="https://x.com/tester/status/12345">看原视频</a>' +
       '<a href="https://www.youtube.com/watch?v=abc123">打开原文</a>' +
       '<a href="https://x.com/tester">X · @tester</a>' +
@@ -114,6 +115,8 @@ check('capOutput passes short text', T.capOutput('ok') === 'ok')
 // Web UI API payload builders
 const newsApi = T.apiNewsPayload(site, 10, '')
 check('api news payload', newsApi.items.length === 1 && newsApi.items[0].url.includes('take.hk'))
+check('api news carries cover image', newsApi.items[0].image === 'https://i.ytimg.com/vi/test/hqdefault.jpg')
+check('extractImage fallback empty', T.extractImage('<div>no image</div>') === '')
 const newsFiltered = T.apiNewsPayload(site, 10, 'tools')
 check('api news category filter', newsFiltered.items.length === 1 && newsFiltered.items[0].categoryLabel === 'AI 影像工具')
 const dailyApi = T.apiDailyPayload(site, 5)
@@ -169,7 +172,7 @@ check('unmount unregisters tools', registered.length === 0)
 
 // ------------------------------------------------------- manifest/resources
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-check('version 0.8.0', manifest.version === '0.8.0')
+check('version 0.9.0', manifest.version === '0.9.0')
 check('dsh bundle patch', manifest.dsh && manifest.dsh.bundle && manifest.dsh.bundle.patch === './cordis.patch.yml')
 check('exports locale+icon', manifest.exports['./locale/*.json'] && manifest.exports['./icon'])
 for (const file of ['locale/en.json', 'locale/zh.json']) {

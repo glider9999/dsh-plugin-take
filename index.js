@@ -30,8 +30,8 @@ export const inject = ['tools', 'webServer']
 
 const SITE = 'https://take.hk'
 const FEED_URL = SITE + '/feed.xml'
-const UA = 'dsh-plugin-take/0.8.0'
-const CACHE_SCHEMA = 4
+const UA = 'dsh-plugin-take/0.9.0'
+const CACHE_SCHEMA = 5
 const DISK_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const CACHE_DIR = process.env.DSH_PLUGIN_TAKE_CACHE_DIR ||
   join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'cache', 'dsh-plugin-take')
@@ -168,6 +168,15 @@ function extractItemIds(html) {
   return ids
 }
 
+// First real image in a rendered page (YouTube thumbnails, article art, ...).
+function extractImage(html) {
+  const source = String(html || '')
+  const og = source.match(/property="og:image" content="(https?:\/\/[^"]+)"/i)
+  if (og) return decodeEntities(og[1])
+  const img = source.match(/<img[^>]+src="(https?:\/\/[^"]+)"/i)
+  return img ? decodeEntities(img[1]) : ''
+}
+
 // One page record shared by the buffer and the streaming parsers.
 function pageRecord(route, html) {
   const text = htmlToText(html)
@@ -175,6 +184,8 @@ function pageRecord(route, html) {
   if (route.startsWith('/items/')) {
     const links = extractSourceLinks(html)
     if (links.length > 0) record.links = links
+    const image = extractImage(html)
+    if (image) record.image = image
   }
   return record
 }
@@ -499,6 +510,7 @@ function assembleSite({ pages, index, titles, usedFastPath, stamp, categoryByIte
       summary: collapse(entry.s || ''),
       date: page.date || '',
       category: (categoryByItem && categoryByItem[id]) || '',
+      image: page.image || '',
     })
   }
   items.sort((a, b) => {
@@ -1021,6 +1033,7 @@ function apiNewsPayload(site, limit, category) {
       url: urlFor(item.route),
       category: item.category || '',
       categoryLabel: categoryLabel(item.category),
+      image: item.image || '',
     })),
   }
 }
@@ -1059,6 +1072,7 @@ function apiSearchPayload(site, query, limit, category) {
       snippet: hit.snippet || '',
       category: hit.category || '',
       categoryLabel: categoryLabel(hit.category || ''),
+      image: (site.pages[hit.route] && site.pages[hit.route].image) || '',
     })),
   }
 }
@@ -1081,6 +1095,7 @@ async function apiReadPayload(target, maxChars) {
     truncated: body.length > maxChars,
     totalChars: body.length,
     links: page.links || [],
+    image: page.image || '',
   }
 }
 
@@ -1385,6 +1400,7 @@ export const tools = {
   apiDailyPayload,
   apiSearchPayload,
   apiTopicsPayload,
+  extractImage,
   sendJson,
 }
 

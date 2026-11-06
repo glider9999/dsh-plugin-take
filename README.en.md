@@ -34,9 +34,11 @@ dsh plugin --profile <your-profile> add dsh-plugin-take
 
 After installing, the left sidebar (Plugins group) gains a **Take** icon — refresh the page once. It opens a read-only take.hk browser:
 
-- tabs for daily briefings, selected news and topic archives;
-- a global search box, plus 7 category filters on the news tab;
-- click any item to read it inline and jump to the original take.hk page;
+- magazine-style layout: a hero card for today's briefing plus a cover-card grid (thumbnails when available, gradient fallback otherwise);
+- tabs for daily briefings, selected news and topic archives; 7 category chips on the news tab;
+- a global search box whose results render as cards too;
+- click any item for a reading view with cover, body text, original source links and a jump to take.hk;
+- staggered fade-in, hover lift, skeletons, and theme-aware colors;
 - data comes from the local `/take/api/*` read-only routes over the public site snapshot — same-origin, no extra key.
 
 The page is another view over the same snapshot the `take_*` agent tools use.

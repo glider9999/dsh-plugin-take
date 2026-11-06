@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.0 — 2026-11-06
+
+- **Designed Take page**: magazine-style layout with a hero card for today's
+  briefing, cover-card grids for news (thumbnails extracted from the site
+  snapshot, gradient fallback), topic cards, staggered fade-in, hover lift,
+  skeleton loading and a reading view with cover + source links.
+- **Cover images in the API**: item pages now expose their first image
+  (`og:image` or first `<img>`), carried through `/take/api/news`,
+  `/take/api/search` and `/take/api/read`.
+- Cache schema bumped so existing snapshots pick up the new image field.
+
 ## 0.8.0 — 2026-11-06
 
 - **Web UI page**: the bundle now ships a browser half (`client.js`) that adds a

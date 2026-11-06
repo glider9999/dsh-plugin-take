@@ -1,26 +1,17 @@
 // dsh-plugin-take — Web UI half.
 //
-// Registers a left-sidebar panel icon ("Take") and the matching main panel: a
-// read-only browser for take.hk with search, daily briefings, news items,
-// topic archives and an in-page reader. All data comes from the Host half over
-// the same-origin `/take/api/*` routes, so no cross-origin requests are made.
+// A left-sidebar "Take" panel and its main page: a magazine-style read-only
+// browser for take.hk (daily briefings, selected news, topic archives) with
+// cover cards, category filters, search and an in-page reader. Data comes from
+// the Host half over same-origin `/take/api/*` routes.
 window.__ModuleLoader__.load({
   id: 'dsh-plugin-take',
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const { useEffect, useMemo, useRef, useState } = React
+    const { useEffect, useRef, useState } = React
+    const PAGE_KEY = 'take'
 
-    const T = {
-      bg: 'var(--bg, #ffffff)',
-      surface: 'var(--surface, #f6f6f4)',
-      ink: 'var(--ink, #1d1d1f)',
-      ink2: 'var(--ink-2, #4b4b50)',
-      ink3: 'var(--ink-3, #8a8a8f)',
-      line: 'var(--line, #e5e5e3)',
-      accent: 'var(--accent, #2563eb)',
-      sunk: 'var(--bg-sunk, #efefec)',
-    }
     const CATEGORIES = [
       ['video-models', 'AI 视频模型'],
       ['tools', 'AI 影像工具'],
@@ -30,7 +21,113 @@ window.__ModuleLoader__.load({
       ['tip', '教程'],
       ['opinion', '观点'],
     ]
-    const PAGE_KEY = 'take'
+    const CATEGORY_LABELS = Object.fromEntries(CATEGORIES)
+    const TABS = [
+      ['daily', '日报'],
+      ['news', '精选'],
+      ['topics', '专题'],
+    ]
+
+    const CSS = `
+.tk-root{height:100%;overflow:auto;background:
+  radial-gradient(1200px 500px at 12% -10%, rgba(37,99,235,.06), transparent 60%),
+  radial-gradient(900px 420px at 92% 0%, rgba(124,58,237,.06), transparent 55%),
+  var(--bg,#fff);
+  color:var(--ink,#1d1d1f);font-feature-settings:"tnum";
+}
+.tk-wrap{max-width:1120px;margin:0 auto;padding:26px 30px 90px}
+.tk-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px}
+.tk-brand{display:flex;align-items:baseline;gap:10px}
+.tk-brand h1{font-size:23px;font-weight:750;letter-spacing:.2px;margin:0}
+.tk-stamp{font-size:11.5px;color:var(--ink-3,#8a8a8f)}
+.tk-spacer{flex:1}
+.tk-link{font-size:13px;color:var(--accent,#2563eb);text-decoration:none}
+.tk-link:hover{text-decoration:underline}
+.tk-search{display:flex;gap:8px;flex:1 1 300px;min-width:240px}
+.tk-input{flex:1;min-width:0;padding:9px 13px;border-radius:11px;border:1px solid var(--line,#e5e5e3);
+  background:var(--surface,#f6f6f4);color:var(--ink,#1d1d1f);font-size:13.5px;outline:none;transition:.2s}
+.tk-input:focus{border-color:var(--accent,#2563eb);background:var(--bg,#fff);box-shadow:0 0 0 3px rgba(37,99,235,.10)}
+.tk-btn{padding:9px 16px;border-radius:11px;border:1px solid var(--accent,#2563eb);background:var(--accent,#2563eb);
+  color:#fff;font-size:13.5px;cursor:pointer;transition:.15s}
+.tk-btn:hover{filter:brightness(1.06)}
+.tk-tabs{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+.tk-tab{padding:7px 16px;border-radius:999px;border:1px solid var(--line,#e5e5e3);background:transparent;
+  color:var(--ink-2,#4b4b50);font-size:13px;cursor:pointer;transition:.18s}
+.tk-tab:hover{border-color:var(--accent,#2563eb);color:var(--accent,#2563eb)}
+.tk-tab.on{background:var(--accent,#2563eb);border-color:var(--accent,#2563eb);color:#fff}
+.tk-chips{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 18px}
+.tk-chip{padding:5px 12px;border-radius:999px;border:1px solid var(--line,#e5e5e3);background:transparent;
+  color:var(--ink-3,#8a8a8f);font-size:12px;cursor:pointer;transition:.16s}
+.tk-chip:hover{color:var(--ink,#1d1d1f);border-color:var(--ink-3,#8a8a8f)}
+.tk-chip.on{background:var(--ink,#1d1d1f);border-color:var(--ink,#1d1d1f);color:var(--bg,#fff)}
+.tk-hero{position:relative;overflow:hidden;border-radius:22px;padding:30px 32px;color:#fff;margin-bottom:26px;
+  background:linear-gradient(118deg,#0b1220 0%,#12224a 38%,#1f3f8f 68%,#6d28d9 100%);
+  box-shadow:0 22px 60px rgba(15,23,42,.22)}
+.tk-hero:before{content:"";position:absolute;inset:-40% -20% auto auto;width:560px;height:560px;
+  background:radial-gradient(circle,rgba(255,255,255,.20),transparent 62%);pointer-events:none}
+.tk-hero:after{content:"";position:absolute;inset:auto auto -60% -10%;width:420px;height:420px;
+  background:radial-gradient(circle,rgba(255,255,255,.10),transparent 60%);pointer-events:none}
+.tk-kicker{font-size:11px;letter-spacing:.32em;text-transform:uppercase;opacity:.7}
+.tk-hero h2{font-size:25px;line-height:1.35;font-weight:750;margin:10px 0 8px;max-width:760px}
+.tk-hero p{margin:0;font-size:13.5px;line-height:1.75;opacity:.82;max-width:680px}
+.tk-hero-actions{display:flex;gap:10px;margin-top:18px;position:relative;z-index:1}
+.tk-btn-ghost{padding:8px 16px;border-radius:11px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.08);
+  color:#fff;font-size:13px;cursor:pointer;transition:.16s}
+.tk-btn-ghost:hover{background:rgba(255,255,255,.16)}
+.tk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:16px}
+.tk-card{display:flex;flex-direction:column;border-radius:16px;overflow:hidden;cursor:pointer;
+  border:1px solid var(--line,#e5e5e3);background:var(--surface,#f6f6f4);
+  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  animation:tkIn .4s both}
+.tk-card:hover{transform:translateY(-3px);box-shadow:0 16px 36px rgba(15,23,42,.12);border-color:rgba(37,99,235,.35)}
+.tk-cover{position:relative;aspect-ratio:16/9;overflow:hidden;
+  background:linear-gradient(135deg,#1e2a4a,#3b4d7d 55%,#7c3aed)}
+.tk-cover img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .35s ease}
+.tk-card:hover .tk-cover img{transform:scale(1.04)}
+.tk-cover-fallback{position:absolute;inset:0;display:flex;align-items:flex-end;padding:12px;
+  font-size:12px;letter-spacing:.3em;text-transform:uppercase;color:rgba(255,255,255,.72)}
+.tk-body{display:flex;flex-direction:column;gap:7px;padding:13px 15px 16px;flex:1}
+.tk-meta{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-3,#8a8a8f)}
+.tk-pill{font-size:10.5px;padding:1px 8px;border-radius:999px;border:1px solid var(--line,#e5e5e3);color:var(--ink-3,#8a8a8f)}
+.tk-title{font-size:14.5px;font-weight:650;line-height:1.5;color:var(--ink,#1d1d1f);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tk-sum{font-size:12.5px;line-height:1.65;color:var(--ink-3,#8a8a8f);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tk-issue{display:flex;gap:16px;align-items:flex-start;padding:16px 18px;border-radius:16px;cursor:pointer;
+  border:1px solid var(--line,#e5e5e3);background:var(--surface,#f6f6f4);transition:.18s;animation:tkIn .35s both}
+.tk-issue:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(15,23,42,.10);border-color:rgba(37,99,235,.35)}
+.tk-issue-date{min-width:92px;font-size:19px;font-weight:750;color:var(--ink,#1d1d1f);font-variant-numeric:tabular-nums}
+.tk-issue-date small{display:block;font-size:11px;font-weight:500;color:var(--ink-3,#8a8a8f);margin-top:2px}
+.tk-issue h3{margin:0 0 4px;font-size:14.5px;line-height:1.5;font-weight:650}
+.tk-issue p{margin:0;font-size:12.5px;line-height:1.65;color:var(--ink-3,#8a8a8f)}
+.tk-stack{display:flex;flex-direction:column;gap:14px}
+.tk-reader{max-width:820px;margin:0 auto;animation:tkIn .35s both}
+.tk-reader-cover{border-radius:18px;overflow:hidden;margin-bottom:22px;max-height:340px}
+.tk-reader-cover img{width:100%;height:100%;object-fit:cover;display:block}
+.tk-reader h2{font-size:27px;line-height:1.4;margin:0 0 10px;letter-spacing:.1px}
+.tk-reader-meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--ink-3,#8a8a8f);margin-bottom:18px}
+.tk-reader-body{white-space:pre-wrap;font-size:14.5px;line-height:1.95;color:var(--ink,#1d1d1f);word-break:break-word}
+.tk-sources{margin-top:26px;padding-top:16px;border-top:1px solid var(--line,#e5e5e3);font-size:12.5px}
+.tk-sources h4{margin:0 0 8px;font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-3,#8a8a8f)}
+.tk-sources a{display:block;color:var(--accent,#2563eb);text-decoration:none;margin-bottom:6px;word-break:break-all}
+.tk-sources a:hover{text-decoration:underline}
+.tk-back{display:inline-flex;align-items:center;gap:6px;margin-bottom:20px;padding:7px 14px;border-radius:999px;
+  border:1px solid var(--line,#e5e5e3);background:var(--surface,#f6f6f4);color:var(--ink-2,#4b4b50);
+  font-size:12.5px;cursor:pointer;transition:.16s}
+.tk-back:hover{border-color:var(--accent,#2563eb);color:var(--accent,#2563eb)}
+.tk-empty{margin-top:26px;padding:34px;text-align:center;border:1px dashed var(--line,#e5e5e3);
+  border-radius:16px;color:var(--ink-3,#8a8a8f);font-size:13px}
+.tk-error{margin:0 0 18px;padding:11px 14px;border-radius:12px;background:#fdecec;color:#b42318;font-size:13px}
+.tk-skel{border-radius:16px;overflow:hidden;border:1px solid var(--line,#e5e5e3);background:var(--surface,#f6f6f4)}
+.tk-skel .a{aspect-ratio:16/9;background:linear-gradient(90deg,var(--bg-sunk,#efefec) 25%,var(--surface,#f6f6f4) 37%,var(--bg-sunk,#efefec) 63%);
+  background-size:400% 100%;animation:tkSh 1.3s infinite}
+.tk-skel .b{padding:14px}
+.tk-skel .l{height:11px;border-radius:6px;background:var(--bg-sunk,#efefec);margin-bottom:9px;animation:tkSh 1.3s infinite}
+.tk-skel .l.w60{width:60%}
+@keyframes tkIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes tkSh{0%{background-position:100% 0}100%{background-position:0 0}}
+@media (max-width:720px){.tk-wrap{padding:18px 16px 70px}.tk-hero{padding:22px 20px}.tk-hero h2{font-size:20px}}
+`
 
     async function api(path) {
       const res = await fetch(path, { headers: { accept: 'application/json' } })
@@ -39,62 +136,94 @@ window.__ModuleLoader__.load({
       return data
     }
 
-    function badge(text) {
-      return h('span', {
-        style: {
-          fontSize: 11, padding: '1px 6px', borderRadius: 999, color: T.ink3,
-          border: '1px solid ' + T.line, whiteSpace: 'nowrap',
-        },
-      }, text)
+    function dateParts(date) {
+      const m = String(date || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+      if (!m) return { main: date || '', sub: '' }
+      return { main: m[2] + '/' + m[3], sub: m[1] }
     }
 
-    function Row(props) {
-      const { item, onOpen } = props
-      return h('button', {
-        type: 'button',
-        onClick: () => onOpen(item),
-        style: {
-          display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
-          background: 'transparent', border: 'none', borderBottom: '1px solid ' + T.line,
-          padding: '12px 4px', color: T.ink,
-        },
-      },
-        h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' } },
-          item.date ? h('span', { style: { fontSize: 12, color: T.ink3, fontVariantNumeric: 'tabular-nums' } }, item.date) : null,
-          item.categoryLabel ? badge(item.categoryLabel) : null,
-          h('span', { style: { fontSize: 14.5, fontWeight: 600, lineHeight: 1.4, color: T.ink } }, item.title),
-        ),
-        item.summary ? h('div', { style: { marginTop: 4, fontSize: 13, lineHeight: 1.55, color: T.ink2 } }, item.summary) : null,
+    function Cover(props) {
+      const { image, label } = props
+      return h('div', { className: 'tk-cover' },
+        image
+          ? h('img', { src: image, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer' })
+          : h('div', { className: 'tk-cover-fallback' }, label || 'TAKE'),
       )
     }
 
-    function Detail(props) {
-      const { detail, onBack } = props
-      if (!detail) return null
-      return h('div', { style: { padding: '4px 4px 32px' } },
-        h('button', {
-          type: 'button', onClick: onBack,
-          style: {
-            marginBottom: 12, padding: '6px 12px', borderRadius: 8, cursor: 'pointer',
-            border: '1px solid ' + T.line, background: T.surface, color: T.ink2, fontSize: 13,
-          },
-        }, '← 返回列表'),
-        h('h2', { style: { margin: '4px 0 6px', fontSize: 20, lineHeight: 1.35, color: T.ink } }, detail.title),
-        h('div', { style: { fontSize: 12, color: T.ink3 } },
-          h('a', { href: detail.url, target: '_blank', rel: 'noreferrer', style: { color: T.accent, textDecoration: 'none' } }, '在 take.hk 打开'),
+    function Card(props) {
+      const { item, index, onOpen } = props
+      return h('article', {
+        className: 'tk-card',
+        style: { animationDelay: Math.min(index || 0, 12) * 28 + 'ms' },
+        onClick: () => onOpen(item),
+        role: 'button',
+        tabIndex: 0,
+        onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') onOpen(item) },
+      },
+        h(Cover, { image: item.image, label: item.categoryLabel || (item.kind === 'topic' ? 'TOPIC' : 'TAKE') }),
+        h('div', { className: 'tk-body' },
+          h('div', { className: 'tk-meta' },
+            item.date ? h('span', null, item.date) : null,
+            item.categoryLabel ? h('span', { className: 'tk-pill' }, item.categoryLabel) : null,
+            item.kind === 'topic' ? h('span', { className: 'tk-pill' }, '专题') : null,
+          ),
+          h('div', { className: 'tk-title' }, item.title),
+          item.summary ? h('div', { className: 'tk-sum' }, item.summary) : null,
         ),
-        h('div', {
-          style: {
-            marginTop: 16, whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.8,
-            color: T.ink, wordBreak: 'break-word',
-          },
-        }, detail.text),
+      )
+    }
+
+    function IssueCard(props) {
+      const { item, index, onOpen } = props
+      const parts = dateParts(item.date)
+      return h('article', {
+        className: 'tk-issue',
+        style: { animationDelay: Math.min(index || 0, 12) * 28 + 'ms' },
+        onClick: () => onOpen(item),
+        role: 'button',
+        tabIndex: 0,
+        onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') onOpen(item) },
+      },
+        h('div', { className: 'tk-issue-date' }, parts.main, h('small', null, parts.sub)),
+        h('div', { style: { flex: 1, minWidth: 0 } },
+          h('h3', null, item.title),
+          item.summary ? h('p', null, item.summary) : null,
+        ),
+      )
+    }
+
+    function SkeletonGrid(props) {
+      const count = props.count || 6
+      return h('div', { className: 'tk-grid' },
+        Array.from({ length: count }).map((_, i) => h('div', { key: i, className: 'tk-skel' },
+          h('div', { className: 'a' }),
+          h('div', { className: 'b' },
+            h('div', { className: 'l' }),
+            h('div', { className: 'l w60' }),
+          ),
+        )),
+      )
+    }
+
+    function Reader(props) {
+      const { detail, onBack } = props
+      return h('div', { className: 'tk-reader' },
+        h('button', { type: 'button', className: 'tk-back', onClick: onBack }, '← 返回'),
+        detail.image
+          ? h('div', { className: 'tk-reader-cover' }, h('img', { src: detail.image, alt: '', referrerPolicy: 'no-referrer' }))
+          : null,
+        h('h2', null, detail.title),
+        h('div', { className: 'tk-reader-meta' },
+          detail.totalChars ? h('span', null, detail.totalChars + ' 字') : null,
+          detail.truncated ? h('span', null, '（已截断）') : null,
+          h('a', { className: 'tk-link', href: detail.url, target: '_blank', rel: 'noreferrer' }, '在 take.hk 打开 ↗'),
+        ),
+        h('div', { className: 'tk-reader-body' }, detail.text),
         detail.links && detail.links.length
-          ? h('div', { style: { marginTop: 20, fontSize: 13, color: T.ink2 } },
-              h('div', { style: { fontWeight: 600, marginBottom: 6 } }, '原文 / 来源'),
-              detail.links.map((link, i) => h('div', { key: i, style: { marginBottom: 4, wordBreak: 'break-all' } },
-                h('a', { href: link, target: '_blank', rel: 'noreferrer', style: { color: T.accent, textDecoration: 'none' } }, link),
-              )),
+          ? h('div', { className: 'tk-sources' },
+              h('h4', null, '原文 / 来源'),
+              detail.links.map((link, i) => h('a', { key: i, href: link, target: '_blank', rel: 'noreferrer' }, link)),
             )
           : null,
       )
@@ -104,28 +233,34 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('daily')
       const [category, setCategory] = useState('')
       const [query, setQuery] = useState('')
+      const [submitted, setSubmitted] = useState('')
       const [list, setList] = useState([])
       const [summary, setSummary] = useState(null)
       const [detail, setDetail] = useState(null)
-      const [loading, setLoading] = useState(false)
+      const [loading, setLoading] = useState(true)
       const [error, setError] = useState('')
       const requestId = useRef(0)
+      const scroller = useRef(null)
 
-      async function loadDaily() {
-        const data = await api('/take/api/daily?limit=12')
-        setList((data.dailies || []).map((d) => ({ ...d, kind: 'daily' })))
+      function scrollTop() {
+        try { if (scroller.current) scroller.current.scrollTo({ top: 0, behavior: 'smooth' }) } catch { /* noop */ }
       }
-      async function loadNews(cat) {
-        const data = await api('/take/api/news?limit=30' + (cat ? '&category=' + encodeURIComponent(cat) : ''))
-        setList((data.items || []).map((d) => ({ ...d, kind: 'news' })))
-      }
-      async function loadTopics() {
+
+      async function loadTab(nextTab, cat, q) {
+        if (q) {
+          const data = await api('/take/api/search?q=' + encodeURIComponent(q) + '&limit=30' + (cat ? '&category=' + encodeURIComponent(cat) : ''))
+          return (data.results || []).map((row) => ({ ...row, kind: 'hit' }))
+        }
+        if (nextTab === 'daily') {
+          const data = await api('/take/api/daily?limit=14')
+          return (data.dailies || []).map((row) => ({ ...row, kind: 'daily' }))
+        }
+        if (nextTab === 'news') {
+          const data = await api('/take/api/news?limit=36' + (cat ? '&category=' + encodeURIComponent(cat) : ''))
+          return (data.items || []).map((row) => ({ ...row, kind: 'news' }))
+        }
         const data = await api('/take/api/topics')
-        setList((data.topics || []).map((d) => ({ ...d, kind: 'topic' })))
-      }
-      async function doSearch(q, cat) {
-        const data = await api('/take/api/search?q=' + encodeURIComponent(q) + '&limit=30' + (cat ? '&category=' + encodeURIComponent(cat) : ''))
-        setList((data.results || []).map((d) => ({ ...d, kind: 'hit' })))
+        return (data.topics || []).map((row) => ({ ...row, kind: 'topic' }))
       }
 
       async function refresh(nextTab, cat, q) {
@@ -134,13 +269,10 @@ window.__ModuleLoader__.load({
         setError('')
         setDetail(null)
         try {
-          if (q) await doSearch(q, cat)
-          else if (nextTab === 'daily') await loadDaily()
-          else if (nextTab === 'news') await loadNews(cat)
-          else await loadTopics()
+          const rows = await loadTab(nextTab, cat, q)
+          if (id === requestId.current) setList(rows)
         } catch (err) {
-          setError(err && err.message ? err.message : String(err))
-          setList([])
+          if (id === requestId.current) { setList([]); setError(err && err.message ? err.message : String(err)) }
         } finally {
           if (id === requestId.current) setLoading(false)
         }
@@ -153,15 +285,17 @@ window.__ModuleLoader__.load({
       }, [])
 
       useEffect(() => {
-        refresh(tab, category, query.trim())
+        refresh(tab, category, submitted)
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [tab, category])
 
       async function openItem(item) {
+        const target = item.route || item.id
+        if (!target) return
         setLoading(true)
         setError('')
+        scrollTop()
         try {
-          const target = item.route || item.id
           const data = await api('/take/api/read?target=' + encodeURIComponent(target))
           setDetail(data)
         } catch (err) {
@@ -171,103 +305,94 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const tabs = [
-        ['daily', '日报'],
-        ['news', '精选'],
-        ['topics', '专题'],
-      ]
+      function openToday() {
+        const route = summary && summary.latestDaily ? summary.latestDaily.route : '/today'
+        openItem({ route })
+      }
 
-      return h('div', {
-        style: {
-          height: '100%', overflow: 'auto', background: T.bg, color: T.ink,
-          padding: '18px 22px 40px', boxSizing: 'border-box',
-        },
-      },
-        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' } },
-          h('div', { style: { fontSize: 22, fontWeight: 700, letterSpacing: 0.2 } }, 'Take 云开'),
-          h('div', { style: { fontSize: 12, color: T.ink3 } },
-            summary && summary.stamp ? '站点快照 ' + summary.stamp : 'AI 影像创作者资源'),
-          h('a', {
-            href: 'https://take.hk/', target: '_blank', rel: 'noreferrer',
-            style: { marginLeft: 'auto', fontSize: 13, color: T.accent, textDecoration: 'none' },
-          }, '打开 take.hk ↗'),
-        ),
-        h('div', { style: { display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' } },
-          tabs.map(([key, label]) => h('button', {
-            key,
-            type: 'button',
-            onClick: () => { setTab(key); setQuery(''); setDetail(null) },
-            style: {
-              padding: '6px 14px', borderRadius: 999, cursor: 'pointer', fontSize: 13,
-              border: '1px solid ' + (tab === key ? T.accent : T.line),
-              background: tab === key ? T.accent : 'transparent',
-              color: tab === key ? '#fff' : T.ink2,
-            },
-          }, label)),
-          h('form', {
-            onSubmit: (event) => { event.preventDefault(); refresh(tab, category, query.trim()) },
-            style: { display: 'flex', gap: 6, flex: '1 1 260px', minWidth: 220 },
-          },
-            h('input', {
-              value: query,
-              onChange: (event) => setQuery(event.target.value),
-              placeholder: '搜索 take.hk（模型 / 工具 / 创作者 / 主题）',
-              style: {
-                flex: 1, minWidth: 0, padding: '7px 11px', borderRadius: 8, fontSize: 13,
-                border: '1px solid ' + T.line, background: T.surface, color: T.ink, outline: 'none',
-              },
-            }),
-            h('button', {
-              type: 'submit',
-              style: {
-                padding: '7px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13,
-                border: '1px solid ' + T.accent, background: T.accent, color: '#fff',
-              },
-            }, '搜索'),
-          ),
-        ),
-        tab === 'news'
-          ? h('div', { style: { display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' } },
-              h('button', {
-                type: 'button', onClick: () => setCategory(''),
-                style: {
-                  padding: '4px 10px', borderRadius: 999, cursor: 'pointer', fontSize: 12,
-                  border: '1px solid ' + (category === '' ? T.accent : T.line),
-                  background: category === '' ? T.accent : 'transparent',
-                  color: category === '' ? '#fff' : T.ink2,
-                },
-              }, '全部'),
-              CATEGORIES.map(([slug, label]) => h('button', {
-                key: slug, type: 'button', onClick: () => setCategory(slug),
-                style: {
-                  padding: '4px 10px', borderRadius: 999, cursor: 'pointer', fontSize: 12,
-                  border: '1px solid ' + (category === slug ? T.accent : T.line),
-                  background: category === slug ? T.accent : 'transparent',
-                  color: category === slug ? '#fff' : T.ink2,
-                },
-              }, label)),
-            )
-          : null,
-        error
-          ? h('div', { style: { marginTop: 18, padding: '10px 12px', borderRadius: 8, background: '#fdecec', color: '#b42318', fontSize: 13 } }, '加载失败：' + error)
-          : null,
-        loading
-          ? h('div', { style: { marginTop: 24, fontSize: 13, color: T.ink3 } }, '正在读取 take.hk 站点快照…')
-          : null,
-        detail
-          ? h(Detail, { detail, onBack: () => setDetail(null) })
-          : h('div', { style: { marginTop: 10 } },
-              list.length === 0 && !loading && !error
-                ? h('div', { style: { marginTop: 20, fontSize: 13, color: T.ink3 } }, '没有内容。试试换一个分类或关键词。')
-                : null,
-              list.map((item, index) => h(Row, {
-                key: (item.route || item.id || '') + ':' + index,
-                item,
-                onOpen: openItem,
-              })),
+      const hero = summary && summary.latestDaily
+        ? h('section', { className: 'tk-hero' },
+            h('div', { className: 'tk-kicker' }, 'AI 影像日报 · ' + summary.latestDaily.date),
+            h('h2', null, summary.latestDaily.title),
+            h('p', null, '今天 Take 收录了 ' + (summary.counts ? summary.counts.items : '') + ' 条精选资讯、' + (summary.counts ? summary.counts.dailies : '') + ' 期日报与 ' + (summary.counts ? summary.counts.topics : '') + ' 个主题库，数据来自 take.hk 公开快照。'),
+            h('div', { className: 'tk-hero-actions' },
+              h('button', { type: 'button', className: 'tk-btn', onClick: openToday }, '阅读今日日报'),
+              h('a', { className: 'tk-btn-ghost', href: 'https://take.hk/', target: '_blank', rel: 'noreferrer', style: { textDecoration: 'none' } }, '打开 take.hk ↗'),
             ),
-        h('div', { style: { marginTop: 24, fontSize: 11.5, color: T.ink3, lineHeight: 1.7 } },
-          '只读浏览 · 数据来自 take.hk 公开站点快照 · 是否在 take.hk 上以站点收录为准',
+          )
+        : null
+
+      const isNews = tab === 'news' && !submitted
+      const showSkeleton = loading && !detail
+
+      return h('div', { className: 'tk-root', ref: scroller },
+        h('style', null, CSS),
+        h('div', { className: 'tk-wrap' },
+          h('header', { className: 'tk-bar' },
+            h('div', { className: 'tk-brand' },
+              h('h1', null, 'Take 云开'),
+              h('span', { className: 'tk-stamp' }, summary && summary.stamp ? '快照 ' + summary.stamp : 'AI 影像创作者资源'),
+            ),
+            h('div', { className: 'tk-spacer' }),
+            h('form', {
+              className: 'tk-search',
+              onSubmit: (event) => { event.preventDefault(); setSubmitted(query.trim()); refresh(tab, category, query.trim()); scrollTop() },
+            },
+              h('input', {
+                className: 'tk-input',
+                value: query,
+                placeholder: '搜索模型 / 工具 / 创作者 / 主题…',
+                onChange: (event) => setQuery(event.target.value),
+              }),
+              h('button', { type: 'submit', className: 'tk-btn' }, '搜索'),
+            ),
+          ),
+          h('nav', { className: 'tk-tabs' },
+            TABS.map(([key, label]) => h('button', {
+              key,
+              type: 'button',
+              className: 'tk-tab' + (tab === key && !submitted ? ' on' : ''),
+              onClick: () => { setTab(key); setQuery(''); setSubmitted(''); setDetail(null); scrollTop() },
+            }, label)),
+            submitted
+              ? h('button', {
+                  type: 'button', className: 'tk-tab on',
+                  onClick: () => { setQuery(''); setSubmitted(''); refresh(tab, category, ''); scrollTop() },
+                }, '搜索：' + submitted + ' ✕')
+              : null,
+          ),
+          isNews
+            ? h('div', { className: 'tk-chips' },
+                h('button', {
+                  type: 'button', className: 'tk-chip' + (category === '' ? ' on' : ''),
+                  onClick: () => setCategory(''),
+                }, '全部'),
+                CATEGORIES.map(([slug, label]) => h('button', {
+                  key: slug, type: 'button',
+                  className: 'tk-chip' + (category === slug ? ' on' : ''),
+                  onClick: () => setCategory(slug),
+                }, label)),
+              )
+            : null,
+          error ? h('div', { className: 'tk-error' }, '加载失败：' + error) : null,
+          detail
+            ? h(Reader, { detail, onBack: () => setDetail(null) })
+            : h('div', null,
+                tab === 'daily' && !submitted && !loading ? hero : null,
+                showSkeleton
+                  ? h(SkeletonGrid, { count: tab === 'daily' ? 4 : 6 })
+                  : h('div', { className: tab === 'daily' ? 'tk-stack' : 'tk-grid' },
+                      list.map((item, index) => tab === 'daily'
+                        ? h(IssueCard, { key: (item.route || item.date || '') + index, item, index, onOpen: openItem })
+                        : h(Card, { key: (item.route || item.id || '') + index, item, index, onOpen: openItem })),
+                    ),
+                !loading && !error && list.length === 0
+                  ? h('div', { className: 'tk-empty' }, '没有内容。换一个分类或关键词试试。')
+                  : null,
+              ),
+          h('footer', { style: { marginTop: 34, fontSize: 11.5, color: 'var(--ink-4,#a8a8ad)', lineHeight: 1.7 } },
+            '只读浏览 · 数据来自 take.hk 公开站点快照 · 与 take_* 工具同源',
+          ),
         ),
       )
     }
@@ -278,7 +403,7 @@ window.__ModuleLoader__.load({
         viewBox: '0 0 24 24', width: edge, height: edge, 'aria-hidden': true,
         style: { display: 'block' },
       },
-        h('rect', { x: 2, y: 2, width: 20, height: 20, rx: 5, fill: 'currentColor', opacity: 0.12 }),
+        h('rect', { x: 2, y: 2, width: 20, height: 20, rx: 6, fill: 'currentColor', opacity: 0.12 }),
         h('path', { d: 'M5 7h14v3h-5v9h-4v-9H5z', fill: 'currentColor' }),
       )
     }
@@ -286,12 +411,9 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
-        ctx.slots.inject('main', () => ctx.slots.register({
-          name: 'main', key: PAGE_KEY,
-        }, TakePanel))
+        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PAGE_KEY }, TakePanel))
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-          name: 'sidebar.panellist', id: PAGE_KEY, order: 7,
-          label: () => 'Take',
+          name: 'sidebar.panellist', id: PAGE_KEY, order: 7, label: () => 'Take',
         }, TakeIcon))
       },
     }
